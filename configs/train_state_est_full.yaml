@@ -1,0 +1,37 @@
+model_cfg:
+  type: "TransformerStateEstV3Model"
+  # shape: [400, 3]
+  num_groups: 64  # 256: 64 centers from ~400 unique points → 1 center per ~6 real points
+  group_size: 16  # 64: 16 neighbors / ~5x duplication ≈ 3 unique points per group (no wasted slots)
+  in_channels: 6
+  out_channels: 3
+  num_layers: 6
+  attention_head_dim: 72
+  patchified_input: true
+  num_in_frames: 2
+  num_out_frames: 1
+  patch_file: /home/cjimenez/projects/TrackAnyCloth/UniClothDiff/assets/vr_400_voronoi_template.pkl
+  # patch_file: /home/cjimenez/Projects/Tracking/Code/TrackAnyCloth/UniClothDiff/template_square_full_voronoi.pkl
+
+diffusion_cfg:
+  type: "DDPM_StateEst"
+  num_train_timesteps: 1000
+  beta_schedule: "scaled_linear"
+
+wandb_cfg:
+  project_name: "UniClothDiff_w_VR_Folding"
+
+dataset_cfg:
+  type: "ClothTrackingDataset" #"TRTMDiffusionDataset" # "ClothStateEstDataset"
+  data_dir: "/home/cjimenez/projects/datasets/VR_Folding"
+  train_mode: "full"
+  num_sample_points: 400  # native density; no duplication, no wasted encoder capacity
+  do_point_cloud_augmentation: true
+  points_jitter_sigma: 0.0005
+  points_drop_ratio: 0.0
+  # data_dir: /home/cjimenez/Projects/Tracking/Code/TrackAnyCloth/TRTM/datasets/template_square
+  # voxel_downsample_size: 0.005 
+  # do_camera_pose_augmentation: true
+  # r_range: 1.5
+  # t_range: 0.0025
+  

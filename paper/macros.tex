@@ -1,0 +1,34 @@
+% ============================================================
+% macros.tex  —  Shared notation for the FlowCloth paper
+% ============================================================
+
+% --- Cloth mesh ---
+\newcommand{\mesh}{\mathcal{M}}
+\newcommand{\verts}{\mathcal{V}}
+\newcommand{\edges}{\mathcal{E}}
+\newcommand{\boundary}{\partial\mesh}
+
+% --- Key scalars ---
+\newcommand{\Nfull}{400}       % total nodes in the 20x20 VR-Folding mesh
+\newcommand{\Nedge}{76}        % boundary nodes (4*20 - 4)
+\newcommand{\Npoints}{400}     % point cloud samples per frame
+
+% --- Notation shortcuts ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\pcd}{\mathcal{P}}      % point cloud
+\newcommand{\qtemp}{q_\mathrm{temp}}  % canonical template
+\newcommand{\qt}{q_t}                 % noisy / interpolated state at time t
+\newcommand{\qgt}{q_\mathrm{gt}}      % ground-truth state
+\newcommand{\vhat}{\hat{v}}           % predicted velocity
+
+% --- Method names ---
+\newcommand{\ours}{\textit{FlowCloth}}
+\newcommand{\fullddpm}{DDPM-Full}
+\newcommand{\edgeddpm}{DDPM-Edge}
+\newcommand{\fullfm}{FM-Full}
+\newcommand{\edgefm}{FM-Edge}
+
+% --- Common abbreviations ---
+\newcommand{\eg}{\textit{e.g.,}\xspace}
+\newcommand{\ie}{\textit{i.e.,}\xspace}
+\newcommand{\etal}{\textit{et al.}\xspace}

@@ -1,0 +1,29 @@
+model_cfg:
+  type: "TransformerStateEstV3Model"
+  num_groups: 64
+  group_size: 16
+  in_channels: 6
+  out_channels: 3
+  num_layers: 6
+  attention_head_dim: 72
+  patchified_input: true
+  num_in_frames: 2
+  num_out_frames: 1
+  patch_file: /home/cjimenez/projects/TrackAnyCloth/UniClothDiff/assets/vr_400_voronoi_template.pkl
+
+diffusion_cfg:
+  type: "FlowMatching_StateEst"   # only difference vs train_state_est_full.yaml
+  num_train_timesteps: 1000
+
+wandb_cfg:
+  project_name: "UniClothDiff_w_VR_Folding"
+
+dataset_cfg:
+  type: "ClothTrackingDataset"
+  data_dir: "/home/cjimenez/projects/datasets/VR_Folding"
+  train_mode: "full"
+  num_sample_points: 400
+  do_point_cloud_augmentation: true
+  points_jitter_sigma: 0.0005
+  points_drop_ratio: 0.0
+

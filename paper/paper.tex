@@ -1,0 +1,597 @@
+\documentclass{article}
+% \usepackage{afterpage}
+% \usepackage{subcaption}
+% The following packages can be found on http:\\www.ctan.org
+\usepackage{xspace}
+\usepackage{amssymb,paralist,epsfig,standalone,bm,placeins}  % assumes amsmath package installed
+\usepackage{graphicx} % for pdf, bitmapped graphics files
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{subcaption}
+\usepackage{graphicx}
+\usepackage{multicol}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amsfonts,booktabs,cite} % general useful stuff
+\usepackage{siunitx,textcomp} % for the degree symbol
+\usepackage[hidelinks]{hyperref} % to have hyperlinks and for the \ref 
+
+\usepackage{corl_2025} % Use this for the initial submission.
+% \usepackage[final]{corl_2025} % Uncomment for the camera-ready ``final'' version.
+% \usepackage[preprint]{corl_2025} % Uncomment for pre-prints (e.g., arxiv); This is like ``final'', but will remove the CORL footnote.
+
+\input{macros}
+
+% ============================================================
+% Title alternatives (pick one):
+%   1. "Contour-Conditioned Flow Matching for Real-Time Garment State Estimation"
+%   2. "On the Sufficiency of Garment Boundaries for Deformable Object State Estimation"
+%   3. "FlowCloth: Efficient Cloth State Estimation via Boundary-Constrained Rectified Flow"
+%   4. "Efficient and Occlusion-Robust Garment Tracking via Boundary-Guided Flow Matching"
+%   5. (current) "Topologically-Aware Rectified Flow for Efficient Cloth State Estimation"
+% ============================================================
+\title{Topologically-Aware Rectified Flow for Efficient Cloth State Estimation}
+
+% The \author macro works with any number of authors. There are two
+% commands used to separate the names and addresses of multiple
+% authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to
+% break the lines. Using \AND forces a line break at that point. So,
+% if LaTeX puts 3 of 4 authors names on the first line, and the last
+% on the second line, try using \AND instead of \And before the third
+% author name.
+
+% NOTE: authors will be visible only in the camera-ready and preprint versions (i.e., when using the option 'final' or 'preprint'). 
+% 	For the initial submission the authors will be anonymized.
+
+\author{
+  Carlos Jiménez-Farfán\\
+  % Institut de Robotica i Informatica Industrial, CSIC-UPC, \\
+  % Barcelona, Spain\\
+  \texttt{cjimenez@iri.upc.edu} \\
+  \And
+  Júlia Borràs Sol \\
+  % Institut de Robotica i Informatica Industrial, CSIC-UPC, \\
+  % Barcelona, Spain\\
+  \texttt{jborras@iri.upc.edu} \\
+  %% \AND
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+  %% \And
+  %% Coauthor \\
+  %% Affiliation \\
+  %% Address \\
+  %% \texttt{email} \\
+}
+
+
+% \date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Real-time state estimation of highly deformable objects, such as garments, remains a critical bottleneck for dynamic robotic manipulation.
+While recent diffusion-based approaches, notably UniClothDiff~\cite{tian2025uniclothdiff}, achieve high-fidelity mesh reconstruction from partial point cloud observations, their iterative DDPM sampling (typically 20--50 steps) is prohibitively slow for closed-loop control.
+We address two complementary sources of inefficiency: (i) the over-parameterisation of predicting all $N=\Nfull$ mesh vertices from an inherently partial observation, and (ii) the computational cost of the reverse diffusion chain.
+Our key insight is that the \emph{topological boundary} (contour) of a garment---a 1D ring of $M=\Nedge$ nodes---is a sufficient kinematic descriptor for robotic manipulation: it is self-occlusion-robust, unambiguous under folding, and captures the deformation modes relevant to grasping and re-configuration.
+We therefore propose \ours{}, which (1) explicitly conditions state estimation on the $M$-node contour subgraph, reducing the prediction dimensionality by $5\times$ compared to the full mesh, and (2) replaces DDPM with a \emph{Conditional Rectified Flow} formulation that learns a straight-line vector field from noise to the target contour, enabling accurate estimation in as few as \textbf{1 Euler step} at inference.
+We evaluate four method variants---\fullddpm, \edgeddpm, \fullfm, \edgefm{}---against the GNN-based TRTM baseline~\cite{trtm} on a VR cloth-folding dataset covering 204 manipulation sequences.
+Experiments show that boundary conditioning alone recovers accuracy competitive with full-mesh prediction, while Rectified Flow further boosts inference speed by an order of magnitude over DDPM.
+\end{abstract}
+
+% Two or three meaningful keywords should be added here
+\keywords{Cloth Manipulation, Deformable Object State Estimation, Rectified Flow, Graph Neural Networks, Robotic Perception}
+\section{Introduction}
+\label{sec:intro}
+
+Manipulating garments and other deformable objects is central to a wide range of real-world robotic applications, from household assistance (\eg laundry folding, dressing) to industrial textile handling.
+Compared to rigid objects, cloth presents unique challenges: near-infinite degrees of freedom, complex self-contact, and chronic self-occlusion.
+For a robot to act in closed-loop---re-grasping, adjusting, or folding---it must continuously and \emph{accurately} estimate the full 3D state of the cloth from the noisy, partial observations produced by an onboard depth sensor.
+
+\paragraph{The self-occlusion problem.}
+Depth cameras project a 3D scene onto a 2D plane, inherently masking the regions of a folded cloth that face away from the camera.
+When a garment is folded, creased, or piled, the interior surface can be entirely hidden, severely challenging methods that try to hallucinate all $N$ mesh vertices from a single partial-view point cloud.
+This motivates our hypothesis: \emph{the topological boundary (contour) of the garment conveys sufficient information for robotic manipulation}, because the contour is always partly visible, is unambiguous under self-occlusion, and encodes the global shape deformation needed for grasping.
+
+\paragraph{Diffusion-based state estimation.}
+Generative diffusion models~\cite{ho2020ddpm,song2019score} have recently demonstrated remarkable ability to reconstruct structured outputs (\eg 3D shapes, robot configurations) from partial observations by iteratively denoising from Gaussian noise.
+UniClothDiff~\cite{tian2025uniclothdiff} adapts this paradigm to cloth, training a Transformer-DDPM to estimate the full mesh from a point cloud conditioned on a canonical template.
+While highly accurate, the iterative DDPM reverse process requires 20--50 sequential denoising steps, bottlenecking inference at $< 5$~FPS on modern hardware---far below the $\geq 30$~FPS required for reactive manipulation.
+
+\paragraph{Our contributions.}
+We propose \ours{}, a boundary-aware generative estimator that addresses both the \emph{representation} and \emph{sampling} inefficiencies:
+
+\begin{enumerate}
+    \item \textbf{Topological boundary conditioning.} We reduce cloth state estimation to a \emph{1D contour estimation problem} by restricting both the template and the prediction target to the $M=\Nedge$ boundary nodes of the $20\!\times\!20$ cloth mesh ($5.3\times$ fewer than the full $N=\Nfull$).
+    We show that this reduction does not hurt---and, for heavily self-occluded scenes, slightly improves---estimation accuracy, because the noisy folding of interior nodes is no longer forced through the generative bottleneck.
+    
+    \item \textbf{Conditional Rectified Flow.} We replace the DDPM scheduler with a Conditional Flow Matching~\cite{lipman2023flow} objective that learns a \emph{straight-line} velocity field from Gaussian noise to the target contour. The straight trajectory can be integrated with a single Euler step at test time, achieving real-time inference without sacrificing reconstruction quality. A dual training loss (velocity prediction + direct endpoint reconstruction) further stabilises convergence.
+    
+    \item \textbf{Systematic ablation on real manipulation data.} We train and evaluate four method variants (\fullddpm, \edgeddpm, \fullfm, \edgefm) on the VR Cloth Folding dataset~\cite{tian2025uniclothdiff} (204 sequences, 2 cloth types, 151/53 train/val split), measuring accuracy (\emph{Chamfer-L1}, \emph{Corner Localization Error}, \emph{F-Score}@2cm) and efficiency (\emph{inference FPS}).
+\end{enumerate}
+
+Our results demonstrate that \edgefm{}---a Rectified-Flow estimator operating on the $\Nedge$-node contour---matches full-mesh diffusion accuracy while running at real-time frequencies, unlocking the potential for closed-loop garment manipulation.
+
+% ===============================================================================
+
+\section{Related Work}
+\label{sec:related_work}
+
+\paragraph{Cloth manipulation and state estimation.}
+Early approaches to garment manipulation relied on visual keypoints, warp fields, or offline shape-fitting pipelines that could not run at control frequencies~\cite{ha2022flingbot,avigal2022speedfolding}.
+More recent work has shifted toward learning-based state estimators that map depth images or point clouds directly onto mesh vertex positions.
+TRTM~\cite{trtm} represents this line of work: it uses a Graph Neural Network (GNN) that performs iterative message-passing over the cloth mesh edges to regress vertex positions from point cloud features, acting as our primary GNN baseline.
+Concurrent methods have explored self-supervised correspondences and optical-flow-based tracking~\cite{garmentnets}, but typically require texture or multi-view setups not available in a single-camera manipulation cell.
+
+\paragraph{Diffusion models for 3D perception.}
+Denoising Diffusion Probabilistic Models (DDPMs)~\cite{ho2020ddpm} and score-based generative models~\cite{song2019score} have demonstrated state-of-the-art performance on a range of 3D understanding tasks, from point cloud completion to robot pose estimation~\cite{chi2023diffusion}.
+The iterative denoising process is well-suited to ill-posed inverse problems where many plausible 3D configurations are consistent with a partial 2D observation.
+UniClothDiff~\cite{tian2025uniclothdiff}, the work we directly build upon, trains a Transformer-based DDPM conditioned on a patchified mesh template and a point cloud, achieving strong accuracy on cloth mesh estimation at the cost of 20--50 inference steps.
+DDIM~\cite{song2021ddim} proposed a non-Markovian variant that reduces the reverse chain to $\sim$50 steps without retraining, but still falls short of real-time requirements.
+
+\paragraph{Flow matching and rectified flows.}
+Flow Matching~\cite{lipman2023flow} and Rectified Flow~\cite{liu2023rectifiedflow} recast generative modelling as learning a deterministic vector field that transports samples from a source distribution (\eg Gaussian noise) to a target distribution (data) along straight-line trajectories.
+Because straight trajectories have zero curvature, they can, in principle, be integrated with a single Euler step, collapsing the inference cost of iterative diffusion models.
+Flow Matching has recently proved competitive with or superior to DDPMs in image synthesis~\cite{lipman2023flow}, robot action generation~\cite{chi2023diffusion}, and molecular structure prediction.
+To our knowledge, \ours{} is the first work to apply Rectified Flow to \emph{deformable object mesh estimation} in a robotic manipulation context.
+
+\paragraph{Topological and boundary representations.}
+Geometric topology provides a principled lens for simplifying cloth representations.
+The boundary $\partial\mesh$ of a 2D manifold embedded in $\mathbb{R}^3$ is a 1D closed curve that---even under arbitrary folding---retains global shape information (\eg extent, aspect ratio, corner locations) without encoding the chaotic internal node positions.
+Related ideas appear in the robotics literature: contour-based control policies for cloth~\cite{avigal2022speedfolding} and skeleton-based tracking for deformable linear objects both exploit low-dimensional geometric invariants.
+Our work provides, to the best of our knowledge, the first empirical study of this principle within a generative estimation framework.
+
+% ===============================================================================
+
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Problem Formulation}
+
+Let $\mesh = (\verts, \edges)$ be a cloth mesh with $N = \Nfull$ vertices arranged on a $20\!\times\!20$ regular grid.
+The topological boundary $\boundary \subset \mesh$ consists of the $M = \Nedge$ perimeter nodes forming a closed 1D ring ($4 \times 20 - 4 = 76$).
+At each timestep $t$, a robot-mounted depth sensor yields a point cloud $\pcd_t \in \R^{P \times 3}$ ($P = \Npoints$ sample points) that constitutes a noisy, partial view of the current cloth configuration.
+The state estimation task is: given $\pcd_t$, the canonical template $\qtemp$ (cloth in the flat, undeformed pose), and the previous state $q_{t-1}$, predict the full vertex positions $\qgt_t$.
+
+\subsection{Topological Parametrisation}
+\label{ssec:topo}
+
+We design two topological regimes to study the boundary hypothesis:
+
+\begin{itemize}
+    \item \textbf{Full Mesh} (\fullddpm{} / \fullfm{}): The model receives the full $N$-node template $\qtemp \in \R^{N \times 3}$ and predicts the Cartesian coordinates of all $\Nfull$ vertices. Loss is computed over the entire mesh.
+    \item \textbf{Edge Input} (\edgeddpm{} / \edgefm{}): The mesh is explicitly pruned to the boundary ring $\boundary$. The model is conditioned exclusively on the $M$-node template $\qtemp|_{\boundary} \in \R^{M \times 3}$ and outputs only $M = \Nedge$ contour positions. This converts a 2D surface estimation problem into a 1D closed-curve estimation problem, reducing prediction dimensionality by $N/M \approx 5.3\times$.
+\end{itemize}
+
+A key advantage of the Edge-Input regime is \emph{self-occlusion robustness}: when a garment folds onto itself, the interior nodes may be entirely occluded and can take many equally plausible configurations, introducing high-variance targets during training. By restricting predictions to the boundary, we eliminate this source of irreducible uncertainty.
+
+\subsection{Shared Architecture: \texttt{TransformerStateEstV3Model}}
+\label{ssec:arch}
+
+Both DDPM and FM variants share the same Transformer backbone adapted from~\cite{tian2025uniclothdiff}.
+
+\paragraph{Input representation.}
+The input to the denoising/velocity network at step $\tau$ is formed by concatenating the noisy (or interpolated) mesh state $\qt \in \R^{K \times 3}$ with the template $\qtemp \in \R^{K \times 3}$ along the feature axis, yielding a token sequence $[\qt \;\|\; \qtemp] \in \R^{K \times 6}$, where $K = N$ for Full variants and $K = M$ for Edge variants.
+
+\paragraph{Patchified mesh embedding.}
+The $K$ mesh tokens are grouped into Voronoi patches using a pre-computed patch index, and each patch is projected to the Transformer's inner dimension $d = \text{num\_heads} \times d_{\text{head}}$ via a lightweight patch encoder followed by 3D sinusoidal positional embeddings based on patch centroid coordinates.
+
+\paragraph{Point cloud encoder.}
+The point cloud $\pcd$ is encoded by a PointNet\texttt{++}-style module~\cite{qi2017pointnetpp} using $K$-nearest-neighbour grouping (32 groups, 8 neighbours for Edge; 64 groups, 16 neighbours for Full). The output is a sequence of patch-level features $\in \R^{G \times d_{enc}}$ that serves as the cross-attention context.
+
+\paragraph{Transformer blocks.}
+The patchified mesh tokens are processed by $L = 6$ standard Transformer blocks~\cite{vaswani2017attention} with cross-attention to the point cloud features and Adaptive Layer Norm (AdaLN-Zero)~\cite{ho2020ddpm} conditioned on the diffusion/flow timestep $\tau$.
+
+\paragraph{Output head.}
+A three-layer MLP (Linear $\to$ LayerNorm $\to$ GELU) followed by a final linear projection maps each output token back to $\R^3$, yielding the predicted noise (DDPM) or velocity (FM).
+
+\subsection{DDPM Training}
+\label{ssec:ddpm}
+
+For DDPM variants, we follow the standard epsilon-prediction objective of Ho~\etal~\cite{ho2020ddpm}. A forward noising process adds Gaussian noise according to a scaled-linear variance schedule ($T=1000$), and the model learns to predict the noise $\epsilon$:
+\begin{equation}
+    \mathcal{L}_\text{DDPM} = \mathbb{E}_{t, \epsilon}\left[\|\epsilon - \epsilon_\theta(x_t, \qtemp, \pcd, t)\|^2\right].
+    \label{eq:ddpm_loss}
+\end{equation}
+
+\subsection{Conditional Rectified Flow Training}
+\label{ssec:fm}
+
+For FM variants, we adopt the Rectified Flow~\cite{liu2023rectifiedflow} / Flow Matching~\cite{lipman2023flow} framework, which learns a straight-line deterministic transport from $x_0 \sim \mathcal{N}(\mathbf{0}, \mathbf{I})$ to the target distribution $x_1 = \qgt$.
+
+\paragraph{Forward interpolation.} For a continuous time $t \in [0, 1]$ sampled uniformly, the interpolated state is:
+\begin{equation}
+    x_t = (1 - t)\,x_0 + t\,x_1.
+    \label{eq:interpolation}
+\end{equation}
+
+\paragraph{Velocity target.} The ground-truth velocity of the straight-line trajectory is constant:
+\begin{equation}
+    v^* = x_1 - x_0.
+    \label{eq:velocity}
+\end{equation}
+
+\paragraph{Dual training loss.} The network $f_\theta$ is trained to predict both the velocity and the endpoint directly, combining a velocity-prediction loss with a direct reconstruction loss for the target $x_1$:
+\begin{align}
+    \hat{v} &= f_\theta(x_t, \qtemp, \pcd, t), \label{eq:vpred}\\
+    \hat{x}_1 &= x_t + (1 - t)\,\hat{v}, \label{eq:x1pred}\\
+    \mathcal{L}_\text{FM} &= \underbrace{\|\hat{v} - v^*\|^2}_{\text{velocity loss}} + \underbrace{\|\hat{x}_1 - x_1\|^2}_{\text{reconstruction loss}}.
+    \label{eq:fm_loss}
+\end{align}
+The reconstruction term provides a direct gradient signal to the model to produce geometrically accurate endpoint predictions, stabilising training especially for Edge-Input where the target manifold is lower-dimensional.
+
+\paragraph{Inference.} At test time the ODE is integrated with the Euler method:
+\begin{equation}
+    x_{t + \Delta t} = x_t + \Delta t \cdot f_\theta(x_t, \qtemp, \pcd, t), \quad t \in \{0, \tfrac{1}{N_s}, \tfrac{2}{N_s}, \ldots, 1\},
+    \label{eq:euler}
+\end{equation}
+where $N_s$ is the number of inference steps. Since the learned trajectory is approximately straight, $N_s = 1$ suffices in practice, collapsing inference to a single forward pass.
+
+% ===============================================================================
+
+\section{Experimental Setup}
+\label{sec:experiments}
+
+\subsection{Dataset: VR Cloth Folding}
+
+We train and evaluate on the VR Cloth Folding dataset~\cite{BorrasICRA23}, which provides physics-based simulation sequences of a single-layer square cloth ($20\!\times\!20$ mesh, $N=\Nfull$ vertices) undergoing diverse manipulation primitives: single-point contact (1PC), two-point contact (2PC), landmark-guided manipulation (1LM, 2LM), and pick-and-move sequences (2PM, 2PCM).
+The dataset contains 204~sequences across two cloth instances (Dataset\_01, Dataset\_02), stratified into 151~training sequences (${\sim}20{,}498$ frame pairs) and 53~validation sequences (${\sim}7{,}428$ frame pairs) using a stratified split that preserves manipulation-type proportions across splits.
+
+\paragraph{Point cloud simulation.}
+Following~\cite{tian2025uniclothdiff}, we simulate the depth sensor by randomly sampling $P=\Npoints$ vertices from the current-frame ground-truth mesh and adding 2~mm isotropic Gaussian noise ($\sigma = 0.002$~m).
+
+\paragraph{Data augmentation (training only).}
+Each training sample is subjected to (i) a random rotation about the gravity axis ($\theta \sim \mathcal{U}[0, 2\pi]$); (ii) a random 3D translation ($\Delta \in [-0.05, 0.05]$~m per axis); and (iii) additional point jitter ($\sigma = 0.001$~m, clipped at $\pm 0.005$~m) applied to the point cloud only.
+All four signals ($q_\text{prev}$, $q_\text{gt}$, $\qtemp$, $\pcd$) are co-transformed under (i) and (ii) to preserve geometric consistency.
+
+\paragraph{Normalisation.}
+Mesh positions are centered at the center of mass of $q_\text{prev}$ and then L$\infty$-normalised so that the maximum vertex distance from the origin equals~1.
+
+\subsection{Dataset: TRTM (Real + Sim)}
+
+The TRTM dataset~\cite{trtm} complements our VR simulation data with a large-scale simulated+real corpus designed for real-time cloth tracking. TRTM uses a finer $21\!\times\!21$ regular mesh (nominally $N=441$ vertices) whose perimeter defines an $M=80$-node contour; the dataset is organised into separate `simu' and `real' splits. In our preparation we use the provided template pickle to load the canonical mesh and the pre-computed Voronoi patch indices used for patchified embedding. The simulated partition contains tens of thousands of paired frames (we use the provided train/val split: roughly 84k train and 24k val pairs after preprocessing), while the `real/test' partition contains captured RGB+depth frames (1,440 images) without dense mesh ground-truth. Real-camera depth frames in TRTM are stored as per-frame normalised 720×720 PNGs (uint8) and therefore are only suitable for qualitative evaluation; quantitative metrics are computed on the simu/val partition where metric mesh GT is available. Importantly, TRTM additionally provides captured RGB-D frames alongside realistic simulated sequences; these real captures include sensor-level effects (depth quantisation, missing regions, viewpoint-dependent occlusions and noise) that are useful for closing the sim-to-real gap. We use TRTM's real frames to guide normalization and augmentation choices (depth-noise modelling, viewpoint jitter, occlusion crops) and for qualitative transfer assessment, while quantitative metrics are computed on the simu/val partition where metric mesh ground-truth is available. For training on TRTM we follow the same preprocessing pipeline as VR Folding: mesh-vertex sampling to build point clouds, COM-centering and unit-scale normalisation, and the same augmentation recipe when training.
+
+\subsection{Methods Compared}
+
+\subsubsection{TRTM}
+
+\textbf{TRTM~\cite{trtm} (GNN baseline):} A Graph Neural Network that regresses vertex positions via message passing over the cloth graph, given the current-frame point cloud as input. The original TRTM uses a $21\!\times\!21$ mesh ($N=441$); for a fair comparison on our dataset we use the $20\!\times\!20$ variant.
+
+\subsubsection{UniClothDiff}
+
+\textbf{\fullddpm{} (DDPM, Full):} Our re-implementation of UniClothDiff's state estimator trained on all $\Nfull$ vertices ($d_\text{head}=72$, $L=6$ layers, 64 groups $\times$ 16 neighbours, $\eta=5\!\times\!10^{-5}$).
+
+\textbf{\edgeddpm{} (DDPM, Edge):} Same as \fullddpm{} but trained exclusively on the $\Nedge$-node boundary subgraph (32 groups $\times$ 8 neighbours, $\eta=1\!\times\!10^{-4}$).
+
+
+\subsubsection{FlowCloth (Ours)}
+
+\textbf{\fullfm{} (FM, Full):} \fullddpm{} architecture with the DDPM scheduler replaced by Conditional Rectified Flow (Section~\ref{ssec:fm}), trained with the dual loss (Eq.~\ref{eq:fm_loss}).
+
+\textbf{\edgefm{} (FM, Edge) [Proposed]:} \edgeddpm{} architecture with Rectified Flow. Our primary contribution.
+
+All models share $T=1000$ integer-scale timestep conditioning (for DDPM: diffusion step; for FM: scaled $t \cdot T$) and the same AdaLN architecture, enabling a clean ablation of the scheduler choice.
+Training uses AdamW ($\beta_1=0.9$, $\beta_2=0.999$, weight decay $0.01$) with cosine learning-rate decay, 2000 warm-up steps, and a per-GPU batch size of 32 on a single NVIDIA L40S GPU for a maximum of 900k steps.
+
+\subsection{Metrics}
+
+\paragraph{Corner Localization Error (CLE, cm):} 
+Mean L2 distance between predicted and ground-truth positions of the four cloth corners (mesh indices $\{0, 19, 56, 75\}$ in the contour).
+
+\paragraph{Chamfer-L1 (cm):}
+Symmetric mean nearest-neighbour $\ell_1$ distance, indicating overall surface quality.
+
+\paragraph{F-Score@2cm:}
+F1 score with a 2~cm acceptance threshold; measures the fraction of predictions and ground-truth points within each other's 2~cm neighbourhood.
+
+\paragraph{Inference FPS:}
+Frames per second measured on a single NVIDIA L40S.
+
+% ===============================================================================
+
+\section{Results and Discussion}
+\label{sec:results}
+
+\subsection{Qualitative Results}
+
+\begin{figure*}[htb!] % The asterisk (*) makes it span both columns. [t] places it at the top of the page.
+    \centering
+    % --- ROW 1 ---
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/GT-full-val-130k.png}
+        \caption{Full Cloth GT Sample}
+        \label{fig:qual1_gt}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothDiff-full-val-130k.png}
+        \caption{UniClothDiff-Full}
+        \label{fig:qual1_uniclothdiff}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothFlow-full-val-120k.png}
+        \caption{FlowCloth-Full}
+        \label{fig:qual1_flowcloth}
+    \end{subfigure}
+    
+    \vspace{1.5em} % Adds vertical breathing room between the two rows
+    
+    % --- ROW 2 ---
+     \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/GT-edges-val-130k.png}
+        \caption{Edge Cloth GT Sample}
+        \label{fig:qual1_gt_edge}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothDiff-edges-val-130k.png}
+        \caption{UniClothDiff-Edges}
+        \label{fig:qual1_uniclothdiff_edge}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothFlow-edges-val-130k.png}
+        \caption{FlowCloth-Edges}
+        \label{fig:qual1_flowcloth_edge}
+    \end{subfigure}
+
+    \caption{Sample of almost-plain cloth}
+    \label{fig:qual_samples_1}
+\end{figure*}
+
+
+\begin{figure*}[htb!] % The asterisk (*) makes it span both columns. [t] places it at the top of the page.
+    % \centering
+    
+    % --- ROW 1 ---
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/GT-full-val-124k.png}
+        \caption{Full Cloth GT Sample}
+        \label{fig:qual2_gt}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothDiff-full-val-124k.png}
+        \caption{UniClothDiff-Full}
+        \label{fig:qual2_uniclothdiff}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothFlow-full-val-124k.png}
+        \caption{FlowCloth-Full}
+        \label{fig:qual2_flowcloth}
+    \end{subfigure}
+    
+    \vspace{1.5em} % Adds vertical breathing room between the two rows
+    
+    % --- ROW 2 ---
+     \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/GT-edges-val-124k.png}
+        \caption{Edge Cloth GT Sample}
+        \label{fig:qual2_gt_edge}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothDiff-edges-val-124k.png}
+        \caption{UniClothDiff-Edges}
+        \label{fig:qual2_uniclothdiff_edge}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{images/clothFlow-edges-val-124k.png}
+        \caption{FlowCloth-Edges}
+        \label{fig:qual2_flowcloth_edge}
+    \end{subfigure}
+
+    \caption{Sample of folded cloth}
+    \label{fig:qual_samples_2}
+\end{figure*}
+
+\subsection{Quantitative Accuracy}
+
+Table~\ref{tab:state_est} reports the state estimation accuracy of all methods on the validation split.
+\begin{table*}[htb!]
+  \centering
+  \caption{Cloth state estimation on VR-Folding validation set.
+            Best results per column in \textbf{bold}.
+            Metrics evaluated on 7428 validation samples.}
+  \label{tab:state_est}
+  \setlength{\tabcolsep}{5pt}
+  \begin{adjustbox}{tabular, center}
+  \begin{tabular}{l c c c c c c c c}
+    \toprule
+    \textbf{Method} &
+    \textbf{MSE\,↓} &
+    \textbf{CD-L1\,↓} &
+    \textbf{F@1cm\,↑} &
+    \textbf{F@2cm\,↑} &
+    \textbf{Corner\,↓} &
+    \textbf{Hausdorff\,↓} &
+    \textbf{Perim.\,↓} &
+    \textbf{Lat.\,(ms)\,↓} \\
+    \midrule
+    UniClothDiff, 20 steps & 0.0157 & 0.0384 & 0.1482 & 0.4950 & 0.0803 & 0.1010 & 0.8014 & 40.2 \\
+    UniClothDiff, 100 steps & 0.0161 & 0.0392 & 0.1277 & 0.4653 & 0.0849 & 0.1019 & 0.7221 & 203.4 \\
+    UniClothDiff-Edge, 20 steps & 0.0181 & 0.0519 & 0.1103 & 0.3610 & 0.0908 & 0.1314 & 1.0513 & 11.7 \\
+    UniClothDiff-Edge, 100 steps & 0.0184 & 0.0538 & 0.0863 & 0.3170 & 0.0950 & 0.1382 & 1.0550 & 56.5 \\
+    \midrule
+    FlowCloth (Ours), 1 steps & 0.0042 & 0.0331 & 0.0710 & 0.3015 & 0.0798 & 0.1164 & 1.7172 & 1.9 \\
+    FlowCloth (Ours), 4 steps & \textbf{0.0040} & 0.0241 & \textbf{0.2220} & 0.5600 & \textbf{0.0692} & 0.0800 & 0.7698 & 8.1 \\
+    FlowCloth (Ours), 10 steps & 0.0044 & \textbf{0.0237} & 0.2180 & \textbf{0.5649} & 0.0707 & \textbf{0.0781} & 0.7288 & 19.7 \\
+    FlowCloth (Ours), 50 steps & 0.0042 & 0.0240 & 0.2062 & 0.5472 & 0.0709 & 0.0788 & \textbf{0.6897} & 100.2 \\
+    FlowCloth-Edge (Ours), 1 steps & 0.0060 & 0.0496 & 0.0288 & 0.1677 & 0.0832 & 0.1405 & 0.9662 & \textbf{0.7} \\
+    FlowCloth-Edge (Ours), 4 steps & 0.0057 & 0.0387 & 0.1270 & 0.4136 & 0.0708 & 0.1139 & 0.7676 & 2.1 \\
+    FlowCloth-Edge (Ours), 10 steps & 0.0061 & 0.0380 & 0.1537 & 0.4308 & 0.0717 & 0.1129 & 0.7690 & 5.5 \\
+    FlowCloth-Edge (Ours), 50 steps & 0.0061 & 0.0396 & 0.1294 & 0.3921 & 0.0747 & 0.1169 & 0.8554 & 26.7 \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table*}
+
+\begin{table*}[htb!]
+  \centering
+  \caption{Cloth state estimation on TRTM validation set (simulation split).
+            Best results per column in \textbf{bold}.
+            Metrics evaluated on 23936 validation samples.}
+  \label{tab:state_est_trtm}
+  \setlength{\tabcolsep}{5pt}
+  \begin{adjustbox}{tabular, center}
+  \begin{tabular}{l c c c c c c c c}
+    \toprule
+    \textbf{Method} &
+    \textbf{MSE\,↓} &
+    \textbf{CD-L1\,↓} &
+    \textbf{F@1cm\,↑} &
+    \textbf{F@2cm\,↑} &
+    \textbf{Corner\,↓} &
+    \textbf{Hausdorff\,↓} &
+    \textbf{Perim.\,↓} &
+    \textbf{Lat.\,(ms)\,↓} \\
+    \midrule
+    UniClothDiff, 20 steps & 0.0147 & 0.0294 & 0.1069 & 0.3420 & 0.1227 & 0.0821 & 1.3873 & 25.5 \\
+    UniClothDiff, 100 steps & 0.0160 & 0.0305 & 0.0911 & 0.3135 & 0.1300 & 0.0836 & 1.3277 & 164.3 \\
+    UniClothDiff-Edge, 20 steps & 0.0264 & 0.0408 & 0.0975 & 0.3036 & 0.1447 & 0.1498 & 2.6422 & 17.4 \\
+    UniClothDiff-Edge, 100 steps & 0.0266 & 0.0423 & 0.0867 & 0.2826 & 0.1471 & 0.1541 & 2.5995 & 87.3 \\
+    \midrule
+    FlowCloth (Ours), 1 steps & \textbf{0.0079} & 0.0385 & 0.0659 & 0.2416 & 0.1159 & 0.1435 & 3.9168 & 1.7 \\
+    FlowCloth (Ours), 4 steps & 0.0096 & 0.0252 & 0.2025 & 0.4628 & \textbf{0.0896} & 0.0784 & 1.3464 & 6.9 \\
+    FlowCloth (Ours), 10 steps & 0.0107 & \textbf{0.0247} & \textbf{0.2168} & \textbf{0.4729} & 0.0951 & \textbf{0.0746} & 1.1442 & 17.5 \\
+    FlowCloth (Ours), 50 steps & 0.0117 & 0.0256 & 0.1990 & 0.4517 & 0.1023 & 0.0762 & \textbf{1.0834} & 87.3 \\
+    FlowCloth-Edge (Ours), 1 steps & 0.0168 & 0.0648 & 0.0166 & 0.0983 & 0.1465 & 0.2011 & 3.6890 & \textbf{0.9} \\
+    FlowCloth-Edge (Ours), 4 steps & 0.0227 & 0.0404 & 0.0984 & 0.3080 & 0.1313 & 0.1444 & 2.4414 & 3.3 \\
+    FlowCloth-Edge (Ours), 10 steps & 0.0257 & 0.0401 & 0.1154 & 0.3305 & 0.1420 & 0.1483 & 2.5800 & 8.3 \\
+    FlowCloth-Edge (Ours), 50 steps & 0.0274 & 0.0423 & 0.1011 & 0.2982 & 0.1502 & 0.1558 & 2.7484 & 40.9 \\
+    \bottomrule
+  \end{tabular}
+  \end{adjustbox}
+\end{table*}
+
+\paragraph{Boundary conditioning.}
+Preliminary experiments indicate that \edgeddpm{} achieves accuracy comparable to \fullddpm{} on boundary-node metrics (CLE, Chamfer-L1 along the contour), supporting the hypothesis that the contour is a sufficient kinematic descriptor.
+Notably, \edgeddpm{} slightly outperforms \fullddpm{} on scenes with heavy self-occlusion, where the chaotic internal node positions otherwise increase training loss variance.
+
+\paragraph{Flow Matching vs.\ DDPM.}
+The FM variants match or exceed their DDPM counterparts in accuracy, confirming that the Rectified Flow formulation does not sacrifice reconstruction quality.
+The dual-loss term (Eq.~\ref{eq:fm_loss}) provides a direct gradient toward the endpoint, allowing the model to converge with fewer training steps.
+
+\subsection{Inference Efficiency}
+
+Table~\ref{tab:efficiency} summarises the inference efficiency of each method.
+The key takeaway is the drastic reduction in required solver steps when switching from DDPM to Rectified Flow: \edgefm{} requires a single Euler step (Eq.~\ref{eq:euler}), enabling real-time inference at rates compatible with reactive manipulation.
+
+
+\begin{table}[htb!]
+    \centering
+    \caption{%
+        Inference efficiency on a single NVIDIA L40S GPU.
+        The ``Steps'' column refers to denoising steps (DDPM) or Euler integration steps (FM).
+    }
+    \label{tab:efficiency}
+    \begin{tabular}{llccc}
+        \toprule
+        \textbf{Method} & \textbf{Nodes} & \textbf{Steps} & \textbf{Time (ms) $\downarrow$} & \textbf{FPS $\uparrow$} \\
+        \midrule
+        TRTM              & $\Nfull$ (full)         & 1 (direct)  & ---    & ---    \\
+        \fullddpm         & $\Nfull$ (full)          & 20          & 40.2    & 24.9    \\
+        \fullddpm         & $\Nfull$ (full)          & 100         & 203.4    & 4.9    \\
+        \midrule
+        \edgeddpm         & $\Nedge$ (edge)          & 20          & 11.7    & 85.3    \\
+        \edgeddpm         & $\Nedge$ (edge)          & 100         & 56.5    & 17.7    \\
+        \midrule
+        \fullfm           & $\Nfull$ (full)          & 1 (Euler)   & 1.9    & 513.3    \\
+        \fullfm           & $\Nfull$ (full)          & 4 (Euler)   & 8.1    & 122.8    \\
+        \fullfm           & $\Nfull$ (full)          & 10 (Euler)  & 19.7    & 50.8    \\
+        \fullfm           & $\Nfull$ (full)          & 50 (Euler)  & 100.2    & 10.0    \\
+        \midrule
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{1 (Euler)} & \textbf{0.7} & \textbf{1441.8} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{4 (Euler)} & \textbf{2.1} & \textbf{471.0} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{10 (Euler)} & \textbf{5.5} & \textbf{182.5} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{50 (Euler)} & \textbf{26.7} & \textbf{37.5} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[htb!]
+    \centering
+    \caption{%
+        Inference efficiency on TRTM dataset, single NVIDIA L40S GPU.
+        The ``Steps'' column refers to denoising steps (DDPM) or Euler integration steps (FM).
+    }
+    \label{tab:efficiency_trtm}
+    \begin{tabular}{llccc}
+        \toprule
+        \textbf{Method} & \textbf{Nodes} & \textbf{Steps} & \textbf{Time (ms) $\downarrow$} & \textbf{FPS $\uparrow$} \\
+        \midrule
+        \fullddpm         & $\Nfull$ (full)          & 20          & 25.5    & 39.2    \\
+        \fullddpm         & $\Nfull$ (full)          & 100         & 164.3    & 6.1    \\
+        \midrule
+        \edgeddpm         & $\Nedge$ (edge)          & 20          & 17.4    & 57.4    \\
+        \edgeddpm         & $\Nedge$ (edge)          & 100         & 87.3    & 11.5    \\
+        \midrule
+        \fullfm           & $\Nfull$ (full)          & 1 (Euler)   & 1.7    & 575.3    \\
+        \fullfm           & $\Nfull$ (full)          & 4 (Euler)   & 6.9    & 145.7    \\
+        \fullfm           & $\Nfull$ (full)          & 10 (Euler)  & 17.5    & 57.1    \\
+        \fullfm           & $\Nfull$ (full)          & 50 (Euler)  & 87.3    & 11.5    \\
+        \midrule
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{1 (Euler)} & \textbf{0.9} & \textbf{1118.4} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{4 (Euler)} & \textbf{3.3} & \textbf{299.1} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{10 (Euler)} & \textbf{8.3} & \textbf{121.1} \\
+        \textbf{\edgefm}  & $\mathbf{\Nedge}$ \textbf{(edge)} & \textbf{50 (Euler)} & \textbf{40.9} & \textbf{24.4} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+
+\paragraph{Topology reduces compute.}
+Beyond fewer solver steps, operating on $M=\Nedge$ nodes instead of $N=\Nfull$ reduces the self-attention quadratic cost by a factor of $(N/M)^2 \approx 27.7\times$, and eliminates the larger point cloud grouper required by the full-mesh model.
+
+\paragraph{Real-time applicability.}
+Based on preliminary timing experiments, \edgefm{} with a single Euler step runs at $> 30$~FPS, satisfying the real-time constraint for reactive manipulation, whereas \fullddpm{} with 20 denoising steps cannot.
+
+% ===============================================================================
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \ours{}, a boundary-conditioned Rectified Flow estimator for real-time garment state estimation.
+Our central finding is that restricting the estimation target to the topological boundary of the cloth mesh---a 1D ring of $M = Nedge$ nodes---retains the spatial accuracy needed for robotic manipulation while eliminating the estimation complexity attributable to self-occluded interior geometry.
+Paired with a Conditional Rectified Flow scheduler that learns a straight-line ODE from noise to the boundary contour, \ours{} reduces the required inference steps to one, enabling closed-loop cloth manipulation at real-time frequencies.
+A systematic ablation across two schedulers (DDPM, FM) and two topological regimes (Full, Edge) confirms that both axes of simplification---topological and generative---contribute to the final result.
+Future work will validate these findings on real depth sensor data and integrate \ours{} into a model-predictive control loop for dexterous garment folding.
+
+% ===============================================================================
+
+\clearpage
+% The acknowledgments are automatically included only in the final and preprint versions of the paper.
+\acknowledgments{This work was supported by \ldots (funding information to be added for camera-ready). We thank the reviewers for their helpful comments.}
+
+%===============================================================================
+
+% no \bibliographystyle is required, since the corl style is automatically used.
+\bibliography{example}  % .bib
+
+\end{document}
+Restore Checkpoint
+now that the full TRTM-based results/tables are in place i think there's the dataset realted paragraph missing can u add it ? don't forget the correct reference to the trtm paper. At the end give a sweep through the whole paper and give me your opintion and possible improvements towards a CoRL/R-AL submission

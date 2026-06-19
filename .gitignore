@@ -1,0 +1,41 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+
+# Heavy Files (Checkpoints, Datasets, Logs)
+logs/
+experiments/
+wandb/
+*.log
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.hdf5
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.mp4
+*.avi
+*.mkv
+*.pkl
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,32 @@
+model_cfg:
+  type: "TransformerStateEstV3Model"
+  # shape: [400, 3]
+  num_groups: 32  # 32 centers × 8 neighbors = 256/400 = 64% coverage of native pcd
+  group_size: 8
+  in_channels: 6
+  out_channels: 3
+  num_layers: 6
+  attention_head_dim: 72
+  patchified_input: true
+  num_in_frames: 2
+  num_out_frames: 1
+  patch_file: /home/cjimenez/projects/TrackAnyCloth/UniClothDiff/assets/vr_d1_76_voronoi_template.pkl
+  # patch_file: /home/cjimenez/Projects/Tracking/Code/TrackAnyCloth/UniClothDiff/template_square_full_voronoi.pkl
+
+diffusion_cfg:
+  type: "DDPM_StateEst"
+  num_train_timesteps: 1000
+  beta_schedule: "scaled_linear"
+
+wandb_cfg:
+  project_name: "UniClothDiff_w_VR_Folding"
+  exp_name: "train_state_est_edge"
+
+dataset_cfg:
+  type: "ClothTrackingDataset" #"TRTMDiffusionDataset" # "ClothStateEstDataset"
+  data_dir: "/home/cjimenez/projects/datasets/VR_Folding"
+  train_mode: "edge_only"
+  num_sample_points: 400  # native density; pcd sees the whole cloth for edge estimation
+  do_point_cloud_augmentation: true
+  points_jitter_sigma: 0.0005
+  points_drop_ratio: 0.0
