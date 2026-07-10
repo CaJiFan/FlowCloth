@@ -17,6 +17,9 @@ __pycache__/
 .mypy_cache/
 
 # Heavy Files (Checkpoints, Datasets, Logs)
+checkpoints/
+paper/
+trtm_data_calibrated*/
 logs/
 experiments/
 wandb/
