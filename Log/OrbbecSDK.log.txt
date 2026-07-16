@@ -3987,3 +3987,319 @@
 [07/10 15:12:27.907375][info][141713][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
 [07/10 15:12:28.657238][warning][141891][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**59 logs in 10029ms, last: 15:12:21.188199**]
 [07/10 15:12:28.657314][warning][141933][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**21 logs in 2948ms, last: 15:12:27.868351**]
+[07/15 16:26:38.979101][info][20167][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[07/15 16:26:38.979151][info][20167][DeviceManager.cpp:25] Current found device(s): (1)
+[07/15 16:26:38.979158][info][20167][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:26:38.979164][info][20167][DeviceManager.cpp:405] Enable net device enumeration: true
+[07/15 16:26:39.984504][info][20167][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:26:39.984530][info][20167][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:26:40.339631][info][20167][DeviceManager.cpp:199] Device created successfully! Name: Femto Bolt, PID: 0x066b, SN/ID: CL8855300PW FW: 1.0.9
+[07/15 16:26:40.339695][info][20167][Pipeline.cpp:54] [CL8855300PW] Pipeline created with device: {name: Femto Bolt, sn: CL8855300PW}, @0x5555A840CEB0
+[07/15 16:26:40.355222][info][20167][RawPhaseStreamer.cpp:482] Succeed to load depth engine plugin
+[07/15 16:26:40.371210][info][20263][RawPhaseStreamer.cpp:512] initNvramData: metadataHeader.size: 494416, metadataHeader.width: 0, metadataHeader.height: 0
+[07/15 16:26:40.821464][info][20167][Pipeline.cpp:228] [CL8855300PW] Check and set config done!
+[07/15 16:26:40.821493][info][20167][Pipeline.cpp:266] [CL8855300PW] Try to start streams!
+[07/15 16:26:40.821510][info][20167][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Color, format: RGB, width: 1280, height: 720, fps: 30}
+[07/15 16:26:40.821522][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Color
+[07/15 16:26:40.821534][info][20167][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Color, format: MJPG, width: 1280, height: 720, fps: 30}
+[07/15 16:26:40.825224][info][20167][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:26:40.825247][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Depth
+[07/15 16:26:40.825258][info][20167][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:26:41.389415][info][20167][Pipeline.cpp:293] [CL8855300PW] Start streams done!
+[07/15 16:26:41.389433][info][20167][Pipeline.cpp:250] [CL8855300PW] Pipeline start done!
+[07/15 16:26:41.557005][warning][20167][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100
+[07/15 16:26:41.688770][info][20265][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Color
+[07/15 16:26:41.795174][info][20266][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Depth
+[07/15 16:26:41.795316][warning][20167][Align.cpp:94] Invalid input frame, not depth frame found!
+[07/15 16:26:41.797484][warning][20167][Align.cpp:94] Invalid input frame, not depth frame found!
+[07/15 16:26:42.133029][warning][20273][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset!
+[07/15 16:26:43.721279][info][20320][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:26:43.721303][warning][20320][DeviceBase.cpp:207] Device is deactivated or disconnected while there are still sensors streaming!
+[07/15 16:26:43.721367][info][20320][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:26:43.721369][info][20320][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:26:43.721371][info][20320][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:26:44.674654][warning][20271][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**2 logs in 3117ms, last: 16:26:41.776971**]
+[07/15 16:26:45.013323][warning][20237][UsbEnumeratorLibusb.cpp:398] Failed to open USB device: error=Access denied (insufficient permissions). Try again
+[07/15 16:26:45.063468][warning][20237][UsbEnumeratorLibusb.cpp:407] Failed to open USB device (Access denied (insufficient permissions)), skipping, info.serial and infName may be empty
+[07/15 16:26:45.063605][info][20338][DeviceManager.cpp:332] Device changed! removed: 0, added: 1
+[07/15 16:26:45.063612][info][20338][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:26:45.063614][info][20338][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:26:45.163982][warning][20296][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**33 logs in 3030ms, last: 16:26:43.515186**]
+[07/15 16:26:49.216175][info][20350][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:26:49.216207][info][20350][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:26:49.216215][info][20350][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:26:49.216222][info][20350][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:26:50.309974][info][20167][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:26:50.309994][info][20167][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:26:50.310024][warning][20167][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:26:50.321544][info][20167][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:26:50.321558][info][20167][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:26:50.321589][warning][20167][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:26:50.321785][info][20167][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:26:50.321789][info][20167][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:26:50.321802][warning][20167][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:26:50.321867][warning][20167][Pipeline.cpp:61] [CL8855300PW] Execute failure! A libobsensor_exception has occurred!
+ - where: Pipeline.cpp(61):~Pipeline
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: N11libobsensor21recoverable_exceptionE
+ - status: 108
+[07/15 16:26:50.321892][info][20167][Pipeline.cpp:65] [CL8855300PW] Pipeline destroyed! @0x5555A840CEB0
+[07/15 16:26:50.321906][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Color
+[07/15 16:26:50.322077][warning][20167][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:26:50.322096][warning][20167][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:26:50.322102][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Color
+[07/15 16:26:50.322206][info][20167][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:26:50.322220][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Depth
+[07/15 16:26:50.322298][error][20167][ObLibuvcDevicePort.cpp:211] libusb_clear_halt failed, error code=-4
+[07/15 16:26:50.322320][warning][20167][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:26:50.322332][warning][20167][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:26:50.322338][info][20167][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Depth
+[07/15 16:26:50.322481][info][20167][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:26:50.322600][info][20167][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:26:50.322602][info][20167][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:26:50.352922][info][20167][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:26:50.352927][info][20167][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:26:51.059087][warning][20339][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**51 logs in 6384ms, last: 16:26:50.309875**]
+[07/15 16:31:14.022036][info][20486][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[07/15 16:31:14.022049][info][20486][DeviceManager.cpp:25] Current found device(s): (1)
+[07/15 16:31:14.022050][info][20486][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:31:14.022051][info][20486][DeviceManager.cpp:405] Enable net device enumeration: true
+[07/15 16:31:15.045713][info][20486][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:31:15.045740][info][20486][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:31:15.392647][info][20486][DeviceManager.cpp:199] Device created successfully! Name: Femto Bolt, PID: 0x066b, SN/ID: CL8855300PW FW: 1.0.9
+[07/15 16:31:15.392711][info][20486][Pipeline.cpp:54] [CL8855300PW] Pipeline created with device: {name: Femto Bolt, sn: CL8855300PW}, @0x56207F90EE70
+[07/15 16:31:15.400737][info][20486][RawPhaseStreamer.cpp:482] Succeed to load depth engine plugin
+[07/15 16:31:15.412185][info][20570][RawPhaseStreamer.cpp:512] initNvramData: metadataHeader.size: 494416, metadataHeader.width: 0, metadataHeader.height: 0
+[07/15 16:31:15.864259][info][20486][Pipeline.cpp:228] [CL8855300PW] Check and set config done!
+[07/15 16:31:15.864274][info][20486][Pipeline.cpp:266] [CL8855300PW] Try to start streams!
+[07/15 16:31:15.864283][info][20486][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Color, format: RGB, width: 1280, height: 720, fps: 30}
+[07/15 16:31:15.864289][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Color
+[07/15 16:31:15.864294][info][20486][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Color, format: MJPG, width: 1280, height: 720, fps: 30}
+[07/15 16:31:15.866554][info][20486][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:31:15.866565][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Depth
+[07/15 16:31:15.866571][info][20486][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:31:16.393321][info][20486][Pipeline.cpp:293] [CL8855300PW] Start streams done!
+[07/15 16:31:16.393329][info][20486][Pipeline.cpp:250] [CL8855300PW] Pipeline start done!
+[07/15 16:31:16.519180][warning][20486][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100
+[07/15 16:31:16.731946][info][20579][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Color
+[07/15 16:31:16.804068][info][20580][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Depth
+[07/15 16:31:16.804248][warning][20486][Align.cpp:94] Invalid input frame, not depth frame found!
+[07/15 16:31:17.165769][warning][20587][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset!
+[07/15 16:31:18.714131][info][20629][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:31:18.714157][warning][20629][DeviceBase.cpp:207] Device is deactivated or disconnected while there are still sensors streaming!
+[07/15 16:31:18.714217][info][20629][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:31:18.714219][info][20629][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:31:18.714222][info][20629][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:31:19.652529][warning][20585][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**2 logs in 3133ms, last: 16:31:16.754776**]
+[07/15 16:31:20.005331][warning][20547][UsbEnumeratorLibusb.cpp:398] Failed to open USB device: error=Access denied (insufficient permissions). Try again
+[07/15 16:31:20.055455][warning][20547][UsbEnumeratorLibusb.cpp:407] Failed to open USB device (Access denied (insufficient permissions)), skipping, info.serial and infName may be empty
+[07/15 16:31:20.055606][info][20637][DeviceManager.cpp:332] Device changed! removed: 0, added: 1
+[07/15 16:31:20.055611][info][20637][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:31:20.055613][info][20637][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:31:20.199185][warning][20610][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**32 logs in 3033ms, last: 16:31:18.492413**]
+[07/15 16:31:24.160145][info][20665][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:31:24.160174][info][20665][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:31:24.160182][info][20665][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:31:24.160188][info][20665][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:31:25.324246][info][20486][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:31:25.324265][info][20486][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:31:25.324297][warning][20486][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:31:25.329992][info][20486][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:31:25.329996][info][20486][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:31:25.330006][warning][20486][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:31:25.330089][info][20486][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:31:25.330090][info][20486][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:31:25.330095][warning][20486][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:31:25.330110][warning][20486][Pipeline.cpp:61] [CL8855300PW] Execute failure! A libobsensor_exception has occurred!
+ - where: Pipeline.cpp(61):~Pipeline
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: N11libobsensor21recoverable_exceptionE
+ - status: 108
+[07/15 16:31:25.330129][info][20486][Pipeline.cpp:65] [CL8855300PW] Pipeline destroyed! @0x56207F90EE70
+[07/15 16:31:25.330133][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Color
+[07/15 16:31:25.330241][warning][20486][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:31:25.330260][warning][20486][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:31:25.330267][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Color
+[07/15 16:31:25.330353][info][20486][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:31:25.330365][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Depth
+[07/15 16:31:25.330477][error][20486][ObLibuvcDevicePort.cpp:211] libusb_clear_halt failed, error code=-4
+[07/15 16:31:25.330516][warning][20486][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:31:25.330559][warning][20486][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:31:25.330567][info][20486][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Depth
+[07/15 16:31:25.330642][info][20486][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:31:25.330690][info][20486][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:31:25.330692][info][20486][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:31:25.361894][info][20486][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:31:25.361899][info][20486][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:31:26.076612][warning][20639][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**51 logs in 6424ms, last: 16:31:25.324156**]
+[07/15 16:33:57.210984][info][20816][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[07/15 16:33:57.211028][info][20816][DeviceManager.cpp:25] Current found device(s): (1)
+[07/15 16:33:57.211034][info][20816][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:33:57.211039][info][20816][DeviceManager.cpp:405] Enable net device enumeration: true
+[07/15 16:33:58.232200][info][20816][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:33:58.232211][info][20816][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:33:58.576129][info][20816][DeviceManager.cpp:199] Device created successfully! Name: Femto Bolt, PID: 0x066b, SN/ID: CL8855300PW FW: 1.0.9
+[07/15 16:33:58.576157][info][20816][Pipeline.cpp:54] [CL8855300PW] Pipeline created with device: {name: Femto Bolt, sn: CL8855300PW}, @0x5613D0AA88C0
+[07/15 16:33:58.581390][info][20816][RawPhaseStreamer.cpp:482] Succeed to load depth engine plugin
+[07/15 16:33:58.593028][info][20905][RawPhaseStreamer.cpp:512] initNvramData: metadataHeader.size: 494416, metadataHeader.width: 0, metadataHeader.height: 0
+[07/15 16:33:59.047579][info][20816][Pipeline.cpp:228] [CL8855300PW] Check and set config done!
+[07/15 16:33:59.047614][info][20816][Pipeline.cpp:266] [CL8855300PW] Try to start streams!
+[07/15 16:33:59.047632][info][20816][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Color, format: RGB, width: 1280, height: 720, fps: 30}
+[07/15 16:33:59.047644][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Color
+[07/15 16:33:59.047657][info][20816][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Color, format: MJPG, width: 1280, height: 720, fps: 30}
+[07/15 16:33:59.051295][info][20816][VideoSensor.cpp:58] [CL8855300PW] Try to start stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:33:59.051319][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPED to STARTING@Depth
+[07/15 16:33:59.051329][info][20816][VideoSensor.cpp:127] [CL8855300PW] Start backend stream: {type: Depth, format: Y16, width: 640, height: 576, fps: 30}
+[07/15 16:33:59.583506][info][20816][Pipeline.cpp:293] [CL8855300PW] Start streams done!
+[07/15 16:33:59.583520][info][20816][Pipeline.cpp:250] [CL8855300PW] Pipeline start done!
+[07/15 16:33:59.700089][warning][20816][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100
+[07/15 16:33:59.947670][info][20907][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Color
+[07/15 16:33:59.988159][info][20908][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STARTING to STREAMING@Depth
+[07/15 16:34:00.350358][warning][20925][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset!
+[07/15 16:34:02.820921][warning][20923][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**2 logs in 3120ms, last: 16:33:59.923143**]
+[07/15 16:34:03.384187][warning][20948][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**71 logs in 3033ms, last: 16:34:03.333987**]
+[07/15 16:34:04.954705][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.357500fps
+[07/15 16:34:04.958617][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.363564fps
+[07/15 16:34:05.012861][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.652864fps
+[07/15 16:34:05.012934][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.652864fps
+[07/15 16:34:09.400414][warning][20966][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**141 logs in 6016ms, last: 16:34:09.369239**]
+[07/15 16:34:09.962427][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.151758fps
+[07/15 16:34:09.966345][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.151758fps
+[07/15 16:34:10.020416][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.151758fps
+[07/15 16:34:10.020488][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.151758fps
+[07/15 16:34:14.970278][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.151758fps
+[07/15 16:34:14.974147][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.151758fps
+[07/15 16:34:15.028730][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.151758fps
+[07/15 16:34:15.028803][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.151758fps
+[07/15 16:34:19.978763][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.151758fps
+[07/15 16:34:19.982676][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.151758fps
+[07/15 16:34:20.036635][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.151758fps
+[07/15 16:34:20.036680][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.151758fps
+[07/15 16:34:21.402860][warning][20993][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**281 logs in 12002ms, last: 16:34:21.375892**]
+[07/15 16:34:24.986064][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.151758fps
+[07/15 16:34:24.989978][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.157780fps
+[07/15 16:34:25.043997][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.157780fps
+[07/15 16:34:25.044046][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.151758fps
+[07/15 16:34:29.993544][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.157780fps
+[07/15 16:34:29.997412][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.151758fps
+[07/15 16:34:30.051717][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.151758fps
+[07/15 16:34:30.051775][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.157780fps
+[07/15 16:34:35.001124][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.151758fps
+[07/15 16:34:35.004959][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.157780fps
+[07/15 16:34:35.058858][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.157780fps
+[07/15 16:34:35.058925][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.157780fps
+[07/15 16:34:40.008432][info][20907][VideoSensor.cpp:153] [CL8855300PW] Color backend frame callback, frameRate=30.157780fps
+[07/15 16:34:40.012311][info][20925][SensorBase.cpp:379] [CL8855300PW] Color Streaming... frameRate=30.151758fps
+[07/15 16:34:40.067393][info][20908][VideoSensor.cpp:153] [CL8855300PW] Depth backend frame callback, frameRate=30.145739fps
+[07/15 16:34:40.067451][info][20928][SensorBase.cpp:379] [CL8855300PW] Depth Streaming... frameRate=30.145739fps
+[07/15 16:34:43.373445][info][21083][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:34:43.373463][warning][21083][DeviceBase.cpp:207] Device is deactivated or disconnected while there are still sensors streaming!
+[07/15 16:34:43.373522][info][21083][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:34:43.373524][info][21083][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:34:43.373526][info][21083][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:34:44.665325][warning][20880][UsbEnumeratorLibusb.cpp:398] Failed to open USB device: error=Access denied (insufficient permissions). Try again
+[07/15 16:34:44.715429][warning][20880][UsbEnumeratorLibusb.cpp:407] Failed to open USB device (Access denied (insufficient permissions)), skipping, info.serial and infName may be empty
+[07/15 16:34:44.715620][info][21093][DeviceManager.cpp:332] Device changed! removed: 0, added: 1
+[07/15 16:34:44.715641][info][21093][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:34:44.715643][info][21093][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:34:44.840975][warning][20816][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100
+[07/15 16:34:45.408713][warning][21021][Pipeline.cpp:324] [CL8855300PW] Output frameset queue is full, drop oldest frameset! [**508 logs in 24005ms, last: 16:34:43.129908**]
+[07/15 16:34:47.914261][warning][20816][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**30 logs in 3073ms**]
+[07/15 16:34:48.704065][info][21106][DeviceManager.cpp:332] Device changed! removed: 1, added: 0
+[07/15 16:34:48.704098][info][21106][DeviceManager.cpp:25] Removed device(s) list: (1)
+[07/15 16:34:48.704106][info][21106][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: , Connection: USB3.1
+[07/15 16:34:48.704112][info][21106][DeviceManager.cpp:25] Current device(s) list: (0)
+[07/15 16:34:49.962937][info][20816][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:34:49.962956][info][20816][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:34:49.962989][warning][20816][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:34:49.968796][info][20816][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:34:49.968814][info][20816][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:34:49.968856][warning][20816][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:34:49.969080][info][20816][Pipeline.cpp:367] [CL8855300PW] Try to stop pipeline!
+[07/15 16:34:49.969086][info][20816][Pipeline.cpp:343] [CL8855300PW] Try to stop streams!
+[07/15 16:34:49.969103][warning][20816][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:34:49.969174][warning][20816][Pipeline.cpp:61] [CL8855300PW] Execute failure! A libobsensor_exception has occurred!
+ - where: Pipeline.cpp(61):~Pipeline
+ - msg: Device is deactivated/disconnected! DeviceComponentId:2
+ - type: N11libobsensor21recoverable_exceptionE
+ - status: 108
+[07/15 16:34:49.969203][info][20816][Pipeline.cpp:65] [CL8855300PW] Pipeline destroyed! @0x5613D0AA88C0
+[07/15 16:34:49.969218][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Color
+[07/15 16:34:49.969563][warning][20816][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:34:49.969679][warning][20816][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:34:49.969716][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Color
+[07/15 16:34:49.970199][info][20816][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:34:49.970257][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STREAMING to STOPPING@Depth
+[07/15 16:34:49.970483][error][20816][ObLibuvcDevicePort.cpp:211] libusb_clear_halt failed, error code=-4
+[07/15 16:34:49.970606][warning][20816][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: DeviceBase.cpp(330)
+ - msg: Device is deactivated/disconnected! DeviceComponentId:0
+ - type: WRONG_API_CALL_SEQUENCE
+ - status: 108
+[07/15 16:34:49.970673][warning][20816][VideoSensor.cpp:251] [CL8855300PW] Failed to send stop stream vendor command: Device is deactivated/disconnected! DeviceComponentId:0
+[07/15 16:34:49.970705][info][20816][SensorBase.cpp:210] [CL8855300PW] Stream state changed from STOPPING to STOPPED@Depth
+[07/15 16:34:49.970946][info][20816][SensorBase.cpp:47] [CL8855300PW] SensorBase is destroyed
+[07/15 16:34:49.971203][info][20816][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:34:49.971214][info][20816][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:34:49.994273][info][21176][DeviceManager.cpp:332] Device changed! removed: 0, added: 1
+[07/15 16:34:49.994282][info][21176][DeviceManager.cpp:25] Current device(s) list: (1)
+[07/15 16:34:49.994284][info][21176][DeviceManager.cpp:34] 	- Name: FemtoBolt, PID: 0x066b, SN/ID: CL8855300PW, Connection: USB3.1
+[07/15 16:34:50.003371][info][20816][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[07/15 16:34:50.003377][info][20816][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[07/15 16:34:50.004126][warning][21103][Pipeline.cpp:335] [CL8855300PW] Wait for frame timeout, you can try to increase the wait time! current timeout=100 [**20 logs in 2089ms, last: 16:34:49.962850**]
