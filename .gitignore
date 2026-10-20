@@ -19,10 +19,13 @@ __pycache__/
 # Heavy Files (Checkpoints, Datasets, Logs)
 checkpoints/
 paper/
+slurm/
 trtm_data_calibrated*/
 logs/
 experiments/
 wandb/
+train_og.py
+*.tex
 *.log
 *.pth
 *.pt
@@ -42,3 +45,8 @@ wandb/
 .vscode/
 .idea/
 .DS_Store
+
+
+rollouts/
+scratch/
+trtm_eval_captures/

@@ -49,10 +49,13 @@ Usage — offline (saved PNG)
 
 from __future__ import annotations
 
+import os
+import time
 import numpy as np
 import cv2
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+from scipy.spatial import cKDTree
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRTM / Camera constants  (must match orbbec_frame.py calibration session)
@@ -66,7 +69,7 @@ INVERT_SHADING:     bool  = True    # True = higher folds darker
 
 # Default calibration for interactive cropping (adjust to your session values)
 DEFAULT_CROP_SIZE:   int = 480
-DEFAULT_THRESHOLD:   int = 100
+DEFAULT_THRESHOLD:   int = 35
 DEFAULT_OFFSET_MM:   int = 0
 
 # Orbbec Astra+ approximate intrinsics for the DEPTH stream at 640×480.
@@ -97,22 +100,42 @@ def smooth_depth_map(depth_mm: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(depth_mm.astype(np.float32), (5, 5), 0)
 
 
-def segment_cloth_color(color_bgr: np.ndarray, threshold: int = 30) -> np.ndarray:
+def segment_cloth_color(
+    color_bgr: np.ndarray,
+    threshold: int = DEFAULT_THRESHOLD,
+    depth_map: Optional[np.ndarray] = None,
+    max_depth: float = 1300.0,
+) -> np.ndarray:
     """
-    Simple luminance-threshold segmentation.
+    Simple luminance-threshold segmentation with optional depth gating.
     Returns binary mask uint8 {0, 1} with cloth=1.
     """
     gray = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2GRAY)
-    _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
-    k = np.ones((5, 5), np.uint8)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN,  k)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k)
+    if threshold <= 0:
+        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    else:
+        _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+    if depth_map is not None:
+        binary[(depth_map > max_depth) & (depth_map > 0)] = 0
+    k_close = np.ones((7, 7), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k_close)
+    k_open = np.ones((3, 3), np.uint8)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN,  k_open)
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     mask = np.zeros_like(binary)
     if contours:
         largest = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest) > 500:
-            cv2.drawContours(mask, [largest], -1, 255, -1)
+        max_area = cv2.contourArea(largest)
+        if max_area > 500:
+            for cnt in contours:
+                if cv2.contourArea(cnt) >= max(500.0, 0.15 * max_area):
+                    cv2.drawContours(mask, [cnt], -1, 255, -1)
+            # Fill any holes in mask
+            cnts_fill, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for c in cnts_fill:
+                cv2.drawContours(mask, [c], -1, 255, -1)
+    if depth_map is not None:
+        mask[(depth_map > max_depth) & (depth_map > 0)] = 0
     return (mask // 255).astype(np.uint8)
 
 
@@ -156,31 +179,49 @@ def crop_and_resize(
 def apply_trtm_shading(
     depth_float: np.ndarray,
     bg_mask: np.ndarray,
+    fx: float = DEPTH_FX_DEFAULT,
+    fy: float = DEPTH_FY_DEFAULT,
+    cx: float = DEPTH_CX_DEFAULT,
+    cy: float = DEPTH_CY_DEFAULT,
+    table_plane: Optional[Tuple[float, float, float]] = None,
     offset_mm: float = 0.0,
     manual_table_depth: Optional[float] = None,
+    max_table_depth: float = 1300.0,
 ) -> Tuple[np.ndarray, np.ndarray, float]:
     """
     Convert a masked float depth map to TRTM-encoded grayscale.
-
-    Returns
-    -------
-    encoded_save : uint8 [H,W]  — white-BG version for saving
-    vis_bgr      : uint8 [H,W,3]— black-BG BGR for display
-    table_depth  : float         — estimated table depth in mm
+    Uses table plane correction (if available) to guarantee flat cloth is
+    uniformly normalized to FLAT_PIXEL_VAL (192), eliminating camera tilt artifacts.
     """
-    valid = depth_float[depth_float > 0]
-    if manual_table_depth is not None:
-        table_depth = float(manual_table_depth)
-    elif len(valid) > 0:
-        table_depth = float(np.percentile(valid, 98))
-    else:
-        h, w = depth_float.shape
+    h, w = depth_float.shape
+    cloth_mask = (~bg_mask) & (depth_float > 0) & (depth_float < max_table_depth)
+    cloth_depths = depth_float[cloth_mask]
+
+    if len(cloth_depths) == 0:
         return (np.zeros((h, w), np.uint8),
                 np.zeros((h, w, 3), np.uint8),
-                0.0)
+                900.0)
 
-    table_depth += offset_mm
-    height_map  = table_depth - depth_float
+    if table_plane is not None:
+        A, B, C = table_plane
+        ys, xs = np.where(cloth_mask)
+        zs = depth_float[ys, xs]
+        X = (xs.astype(np.float32) - cx) / fx * zs
+        Y = (ys.astype(np.float32) - cy) / fy * zs
+        z_table_pts = A * X + B * Y + C + offset_mm
+        heights = np.clip(z_table_pts - zs, 0.0, 35.0)
+
+        height_map = np.zeros((h, w), dtype=np.float32)
+        height_map[ys, xs] = heights
+        table_z = float(np.median(z_table_pts))
+    else:
+        if manual_table_depth is not None:
+            table_depth = float(manual_table_depth)
+        else:
+            table_depth = float(np.percentile(cloth_depths, 85))
+        table_depth += offset_mm
+        height_map = np.clip(table_depth - depth_float, 0.0, 35.0)
+        table_z = table_depth
 
     if INVERT_SHADING:
         processed = FLAT_PIXEL_VAL - height_map * PIXEL_PER_MM
@@ -188,11 +229,11 @@ def apply_trtm_shading(
         processed = FLAT_PIXEL_VAL + height_map * PIXEL_PER_MM
     processed = np.clip(processed, 0, 255).astype(np.uint8)
 
-    encoded_save            = processed.copy()
-    encoded_save[bg_mask]   = 255
-    vis_bgr                 = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
-    vis_bgr[bg_mask]        = [0, 0, 0]
-    return encoded_save, vis_bgr, table_depth
+    encoded_save          = processed.copy()
+    encoded_save[bg_mask] = 255
+    vis_bgr               = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+    vis_bgr[bg_mask]      = [0, 0, 0]
+    return encoded_save, vis_bgr, table_z
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,15 +336,30 @@ class OrbbecDepthProcessor:
         fy: float = DEPTH_FY_DEFAULT,
         cx: float = DEPTH_CX_DEFAULT,
         cy: float = DEPTH_CY_DEFAULT,
+        arm_depth_offset_mm: float = 0.0,
+        inpaint_radius: int = 15,
+        use_plane_correction: bool = True,
+        use_height_pruning: bool = True,
+        max_depth_mm: float = 1300.0,
     ):
-        self.num_sample_points = num_sample_points
-        self.crop_size         = crop_size
-        self.seg_threshold     = seg_threshold
-        self.offset_mm         = offset_mm
+        self.num_sample_points   = num_sample_points
+        self.crop_size           = crop_size
+        self.seg_threshold       = seg_threshold
+        self.offset_mm           = offset_mm
+        self.max_depth_mm        = max_depth_mm
         self.fx = fx
         self.fy = fy
         self.cx = cx
         self.cy = cy
+        # Robot arm occlusion handling
+        # arm_depth_offset_mm > 0 enables masking: any pixel within the cloth
+        # region that is more than `arm_depth_offset_mm` mm *closer* to the
+        # camera than the estimated cloth surface is treated as robot arm and
+        # removed. The resulting holes are filled by depth inpainting.
+        self.arm_depth_offset_mm = arm_depth_offset_mm
+        self.inpaint_radius      = inpaint_radius
+        self.use_plane_correction = use_plane_correction
+        self.use_height_pruning   = use_height_pruning
 
         # Live-capture state (populated by start())
         self._pipeline       = None
@@ -327,8 +383,18 @@ class OrbbecDepthProcessor:
                 "Cannot use live capture; use process_saved_depth() instead."
             )
 
-        pipeline = Pipeline()
-        cfg      = Config()
+        pipeline = None
+        for attempt in range(1, 8):
+            try:
+                pipeline = Pipeline()
+                break
+            except Exception as e:
+                print(f"[OrbbecDepthProcessor] Connection attempt {attempt}/7 failed ({e}). Retrying in 1.5s...")
+                time.sleep(1.5)
+        if pipeline is None:
+            raise RuntimeError("Could not connect to Orbbec device after 7 attempts.")
+
+        cfg = Config()
 
         # Color stream
         color_profiles = pipeline.get_stream_profile_list(OBSensorType.COLOR_SENSOR)
@@ -386,10 +452,77 @@ class OrbbecDepthProcessor:
     # Core processing (shared between live and offline modes)
     # ------------------------------------------------------------------
 
+    def _fit_plane_ransac(self, pts: np.ndarray, n_iter: int = 200, threshold: float = 3.0) -> Optional[Tuple[float, float, float]]:
+        """Fits a plane Z = A*X + B*Y + C to points using RANSAC."""
+        n = len(pts)
+        if n < 3:
+            return None
+        best_coef = None
+        best_inliers = 0
+        for _ in range(n_iter):
+            idx = self._rng.choice(n, 3, replace=False)
+            p1, p2, p3 = pts[idx]
+            v1 = p2 - p1
+            v2 = p3 - p1
+            normal = np.cross(v1, v2)
+            norm = np.linalg.norm(normal)
+            if norm < 1e-6:
+                continue
+            normal /= norm
+            if abs(normal[2]) < 1e-2:
+                continue
+            A = -normal[0] / normal[2]
+            B = -normal[1] / normal[2]
+            C = np.dot(normal, p1) / normal[2]
+            z_plane = A * pts[:, 0] + B * pts[:, 1] + C
+            dist = np.abs(z_plane - pts[:, 2])
+            inliers = np.sum(dist < threshold)
+            if inliers > best_inliers:
+                best_inliers = inliers
+                best_coef = (A, B, C)
+        return best_coef
+
+    def fit_table_plane(self, depth_smooth: np.ndarray, background_mask: np.ndarray, pts_3d_cloth: np.ndarray) -> Tuple[float, float, float]:
+        """Fits a 3D table plane Z = A*X + B*Y + C prioritizing cloth points (robust to folds via RANSAC)."""
+        # Prioritize cloth points first, as the cloth lies flat on the table and provides high-density points.
+        if len(pts_3d_cloth) >= 100:
+            pts_sample = pts_3d_cloth
+            if len(pts_3d_cloth) > 5000:
+                idx = self._rng.choice(len(pts_3d_cloth), 5000, replace=False)
+                pts_sample = pts_3d_cloth[idx]
+            coef = self._fit_plane_ransac(pts_sample)
+            if coef is not None:
+                A, B, C = coef
+                # Sanity check: distance (C) must be reasonable, slopes (A, B) must be small.
+                if 500.0 < C < 1200.0 and abs(A) < 0.5 and abs(B) < 0.5:
+                    return coef
+
+        # Fallback to background pixels (excluding smoothed boundary noise and floor)
+        ys, xs = np.where((depth_smooth > 500.0) & (depth_smooth < self.max_depth_mm) & background_mask)
+        if len(ys) >= 100:
+            if len(ys) > 5000:
+                idx = self._rng.choice(len(ys), 5000, replace=False)
+                ys, xs = ys[idx], xs[idx]
+            zs = depth_smooth[ys, xs].astype(np.float32)
+            X = (xs - self.cx) / self.fx * zs
+            Y = (ys - self.cy) / self.fy * zs
+            pts_bg = np.stack([X, Y, zs], axis=1)
+            coef = self._fit_plane_ransac(pts_bg)
+            if coef is not None:
+                A, B, C = coef
+                if 500.0 < C < 1200.0 and abs(A) < 0.5 and abs(B) < 0.5:
+                    return coef
+
+        # Absolute fallback: horizontal plane at table depth percentile (using depth > 500.0 and < max_depth)
+        valid = depth_smooth[(depth_smooth > 500.0) & (depth_smooth < self.max_depth_mm)]
+        table_z = float(np.percentile(valid, 95)) if len(valid) > 0 else 850.0
+        return (0.0, 0.0, table_z)
+
     def _process_raw_frames(
         self,
         depth_raw_mm: np.ndarray,   # uint16 [H, W] in mm
         color_bgr:    np.ndarray,   # uint8  [H, W, 3]
+        prev_mesh:    Optional[np.ndarray] = None, # [N, 3] mm
     ) -> dict:
         """
         Run the full pre-processing pipeline on raw depth + color arrays.
@@ -402,24 +535,64 @@ class OrbbecDepthProcessor:
         depth_filled = fill_depth_holes(depth_raw_mm)
         depth_smooth = smooth_depth_map(depth_filled)
 
-        # Stage 3: cloth segmentation
-        binary_mask     = segment_cloth_color(color_bgr, threshold=self.seg_threshold)
+        # Stage 3: cloth segmentation (with floor depth gating)
+        binary_mask     = segment_cloth_color(
+            color_bgr, threshold=self.seg_threshold, depth_map=depth_smooth, max_depth=self.max_depth_mm
+        )
         background_mask = (binary_mask == 0)
         crop_center     = cloth_centroid(binary_mask, fallback=(w // 2, h // 2))
 
         masked_smooth = depth_smooth * binary_mask    # float32
         masked_raw    = depth_filled * binary_mask    # uint16
 
-        # Stage 4: TRTM encoding
-        trtm_gray, _trtm_vis, table_z = apply_trtm_shading(
-            masked_smooth, background_mask, offset_mm=self.offset_mm
-        )
+        # Stage 3b: Robot arm occlusion removal + depth inpainting (optional)
+        arm_mask_2d = np.zeros_like(binary_mask, dtype=np.uint8)  # for debug output
+        if self.arm_depth_offset_mm > 0 and np.any(binary_mask > 0):
+            arm_candidate = np.zeros_like(binary_mask, dtype=bool)
+            
+            if prev_mesh is not None:
+                # Strategy 1: Temporal Mesh Masking (using 3D KDTree)
+                ys, xs = np.where(depth_smooth > 0)
+                if len(ys) > 0:
+                    zs = depth_smooth[ys, xs].astype(np.float32)
+                    X = (xs.astype(np.float32) - self.cx) / self.fx * zs
+                    Y = (ys.astype(np.float32) - self.cy) / self.fy * zs
+                    pts_3d = np.stack([X, Y, zs], axis=1)
+                    
+                    tree = cKDTree(prev_mesh)
+                    _, idx = tree.query(pts_3d)
+                    nearest_mesh_z = prev_mesh[idx, 2]
+                    nearest_mesh_X = prev_mesh[idx, 0]
+                    nearest_mesh_Y = prev_mesh[idx, 1]
+                    dist_xy_sq = (X - nearest_mesh_X)**2 + (Y - nearest_mesh_Y)**2
+                    
+                    arm_pts_mask = (zs < nearest_mesh_z - self.arm_depth_offset_mm) & (dist_xy_sq < 10000)
+                    arm_candidate[ys[arm_pts_mask], xs[arm_pts_mask]] = True
+                    
+                    if np.any(arm_candidate):
+                        print(f"[OrbbecDepthProcessor] Temporal Arm Mask: removed {int(arm_candidate.sum())} px "
+                              f"(threshold={self.arm_depth_offset_mm:.0f} mm).")
+            else:
+                # Estimate cloth surface depth: use 40th percentile of valid cloth pixels
+                cloth_depths = masked_smooth[binary_mask > 0]
+                cloth_depths_valid = cloth_depths[cloth_depths > 0]
+                if len(cloth_depths_valid) > 100:
+                    cloth_surface_z = float(np.percentile(cloth_depths_valid, 40))
+                    # Arm pixels: within cloth mask region, closer than cloth surface by threshold
+                    arm_candidate = (
+                        (depth_smooth > 0) &
+                        (depth_smooth < cloth_surface_z - self.arm_depth_offset_mm) &
+                        (binary_mask > 0)
+                    )
+                    if np.any(arm_candidate):
+                        print(f"[OrbbecDepthProcessor] Percentile Arm Mask: removed {int(arm_candidate.sum())} px "
+                              f"(cloth surface z={cloth_surface_z:.0f} mm, "
+                              f"threshold={self.arm_depth_offset_mm:.0f} mm).")
 
-        # Stage 5: Crop & resize (for TRTM image saving/debug)
-        trtm_cropped = crop_and_resize(
-            trtm_gray, crop_center, self.crop_size, TARGET_CANVAS_SIZE, bg_color=255
-        )
-
+            if np.any(arm_candidate):
+                arm_mask_2d = arm_candidate.astype(np.uint8)
+                binary_mask[arm_candidate] = 0  # Completely erase arm from cloth mask
+                masked_smooth = depth_smooth * binary_mask
         # Stage 6: Back-project depth → 3-D cloud in camera frame (mm)
         # Use the *masked* smooth depth for back-projection for best quality.
         pts_3d = depth_image_to_pcd(
@@ -431,8 +604,49 @@ class OrbbecDepthProcessor:
             print("[OrbbecDepthProcessor] WARNING: no valid cloth points found!")
             pts_3d = np.zeros((1, 3), np.float32)
 
+        # Fit Table Plane Z = A*X + B*Y + C
+        if self.use_plane_correction:
+            A, B, C = self.fit_table_plane(depth_smooth, background_mask, pts_3d)
+        else:
+            A, B = 0.0, 0.0
+            # Fallback to standard flat table depth
+            valid = depth_smooth[depth_smooth > 0]
+            C = float(np.percentile(valid, 98)) if len(valid) > 0 else 900.0
+
+        # Stage 6b: Convert Z from depth to height coordinates using the fitted table plane
+        pts_3d_height = pts_3d.copy()
+        if not (len(pts_3d) == 1 and np.all(pts_3d == 0)):
+            z_table = A * pts_3d[:, 0] + B * pts_3d[:, 1] + C
+            pts_3d_height[:, 2] = z_table - pts_3d[:, 2]
+
+        # Stage 6c: Prune outliers (heights < -10mm or heights > 80mm)
+        if self.use_height_pruning:
+            if not (len(pts_3d) == 1 and np.all(pts_3d == 0)):
+                mask_valid = (pts_3d_height[:, 2] >= -10.0) & (pts_3d_height[:, 2] <= 80.0)
+                if np.any(mask_valid):
+                    pts_3d_height = pts_3d_height[mask_valid]
+                    pts_3d = pts_3d[mask_valid]
+                else:
+                    print("[OrbbecDepthProcessor] WARNING: all points pruned as height outliers!")
+
+        # Stage 4: TRTM encoding (with table plane correction for uniform 192 flat cloth)
+        table_plane = (float(A), float(B), float(C)) if self.use_plane_correction else None
+        trtm_gray, _trtm_vis, table_z = apply_trtm_shading(
+            masked_smooth, background_mask,
+            fx=self.fx, fy=self.fy, cx=self.cx, cy=self.cy,
+            table_plane=table_plane,
+            offset_mm=self.offset_mm,
+            manual_table_depth=table_z if not self.use_plane_correction else None,
+            max_table_depth=self.max_depth_mm,
+        )
+
+        # Stage 5: Crop & resize (for TRTM image saving/debug)
+        trtm_cropped = crop_and_resize(
+            trtm_gray, crop_center, self.crop_size, TARGET_CANVAS_SIZE, bg_color=255
+        )
+
         # Stage 7: Normalise
-        pts_norm, com, scale = normalise_pcd(pts_3d)
+        pts_norm, com, scale = normalise_pcd(pts_3d_height)
 
         # Stage 8: Subsample to model input size
         pcd = subsample_pcd(pts_norm, self.num_sample_points, self._rng)
@@ -442,11 +656,15 @@ class OrbbecDepthProcessor:
             "com":          com.astype(np.float32),     # [3] mm, camera frame
             "scale":        float(scale),               # mm
             "table_depth_mm": float(table_z),
+            "table_plane":  (float(A), float(B), float(C)) if self.use_plane_correction else None,
             "crop_center":  crop_center,                # (cx, cy) pixels
             "crop_size":    self.crop_size,
             "trtm_image":   trtm_cropped,               # [720,720] uint8
-            "depth_raw_mm": masked_raw,                 # [H,W] uint16
+            "depth_raw_mm": masked_raw,                 # [H,W] uint16 (masked to cloth)
+            "depth_sensor_raw_mm": depth_raw_mm,        # [H,W] uint16 (untouched sensor depth)
             "cloth_mask":   binary_mask,                # [H,W] uint8
+            "color_bgr":    color_bgr,                  # [H,W,3] uint8
+            "arm_mask":     arm_mask_2d,                # [H,W] uint8 — arm pixels (0 if masking disabled)
             "n_cloth_pts":  len(pts_3d),
         }
 
@@ -454,7 +672,7 @@ class OrbbecDepthProcessor:
     # Live capture
     # ------------------------------------------------------------------
 
-    def capture_and_process(self, timeout_ms: int = 2000) -> dict:
+    def capture_and_process(self, timeout_ms: int = 2000, prev_mesh: Optional[np.ndarray] = None, pump_gui: bool = False) -> dict:
         """
         Capture one depth+color frame from the live Orbbec camera and process it.
 
@@ -462,6 +680,10 @@ class OrbbecDepthProcessor:
         ----------
         timeout_ms : int
             SDK frame wait timeout in milliseconds.
+        prev_mesh : Optional[np.ndarray]
+            Previous frame mesh for temporal occlusion masking.
+        pump_gui : bool
+            If True, call cv2.waitKey(1) to keep the GUI responsive while waiting for frames.
 
         Returns
         -------
@@ -470,17 +692,25 @@ class OrbbecDepthProcessor:
         if self._pipeline is None:
             raise RuntimeError("Call start() before capture_and_process().")
 
-        for attempt in range(20):
-            frames = self._pipeline.wait_for_frames(timeout_ms // 20)
+        for attempt in range(50):
+            frames = self._pipeline.wait_for_frames(100)
             if not frames:
+                if pump_gui:
+                    cv2.waitKey(1)
+                if attempt % 15 == 14:
+                    print(f"[OrbbecDepthProcessor] Waiting for camera frames (attempt {attempt+1}/50)...")
                 continue
             frames = self._align_filter.process(frames)
             if not frames:
+                if pump_gui:
+                    cv2.waitKey(1)
                 continue
             frames      = frames.as_frame_set()
             depth_frame = frames.get_depth_frame()
             color_frame = frames.get_color_frame()
             if not depth_frame or not color_frame:
+                if pump_gui:
+                    cv2.waitKey(1)
                 continue
 
             # --- extract depth ---
@@ -498,10 +728,10 @@ class OrbbecDepthProcessor:
             if color_bgr.shape[:2] != (dh, dw):
                 color_bgr = cv2.resize(color_bgr, (dw, dh))
 
-            return self._process_raw_frames(depth_raw_mm, color_bgr)
+            return self._process_raw_frames(depth_raw_mm, color_bgr, prev_mesh=prev_mesh)
 
         raise RuntimeError(
-            f"Could not capture a valid frame after {20} attempts "
+            f"Could not capture a valid frame after 50 attempts "
             f"(total timeout {timeout_ms} ms)."
         )
 
@@ -513,6 +743,7 @@ class OrbbecDepthProcessor:
         self,
         depth_path: str,
         color_path: Optional[str] = None,
+        prev_mesh: Optional[np.ndarray] = None,
     ) -> dict:
         """
         Process a saved depth PNG (uint16, values in mm as written by orbbec_frame.py).
@@ -532,6 +763,8 @@ class OrbbecDepthProcessor:
         depth_raw_mm = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
         if depth_raw_mm is None:
             raise FileNotFoundError(f"Depth image not found: {depth_path}")
+        if depth_raw_mm.ndim == 3:
+            depth_raw_mm = depth_raw_mm[:, :, 0]
         if depth_raw_mm.dtype != np.uint16:
             depth_raw_mm = depth_raw_mm.astype(np.uint16)
 
@@ -548,7 +781,7 @@ class OrbbecDepthProcessor:
         if color_bgr.shape[:2] != (dh, dw):
             color_bgr = cv2.resize(color_bgr, (dw, dh))
 
-        return self._process_raw_frames(depth_raw_mm, color_bgr)
+        return self._process_raw_frames(depth_raw_mm, color_bgr, prev_mesh=prev_mesh)
 
     # ------------------------------------------------------------------
     # Utility: recover metric coordinates from normalised prediction
@@ -559,6 +792,8 @@ class OrbbecDepthProcessor:
         pred_norm: np.ndarray,   # [N, 3] normalised
         com: np.ndarray,         # [3] mm
         scale: float,            # mm
+        table_depth_mm: Optional[float] = None,
+        table_plane: Optional[Tuple[float, float, float]] = None,
     ) -> np.ndarray:
         """
         Convert model output (normalised [N,3]) back to camera-frame mm.
@@ -567,11 +802,17 @@ class OrbbecDepthProcessor:
         -----
         result    = proc.capture_and_process()
         pred_mm   = OrbbecDepthProcessor.denormalise_prediction(
-                        pred[0], result["com"], result["scale"]
+                        pred[0], result["com"], result["scale"], result["table_depth_mm"]
                     )
         corners_mm = pred_mm[corner_indices]  # [4, 3] in mm, camera frame
         """
-        return pred_norm * scale + com
+        pred_mm = pred_norm * scale + com
+        if table_plane is not None:
+            A, B, C = table_plane
+            pred_mm[:, 2] = (A * pred_mm[:, 0] + B * pred_mm[:, 1] + C) - pred_mm[:, 2]
+        elif table_depth_mm is not None:
+            pred_mm[:, 2] = table_depth_mm - pred_mm[:, 2]
+        return pred_mm
 
 
 # ─────────────────────────────────────────────────────────────────────────────

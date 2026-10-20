@@ -258,6 +258,48 @@ def parse_args():
         default=True,
         action="store_true"
     )
+    parser.add_argument(
+        "--use_hybrid_patience_loss",
+        action="store_true",
+        default=False,
+        help="Whether to use hybrid (corner_error + 1.5 * chamfer_l1) metric for early stopping and checkpoint-best saving (default: False, corner-only)."
+    )
+    parser.add_argument(
+        "--patience_limit",
+        type=int,
+        default=15,
+        help="Number of consecutive evaluations without improvement before early stopping (default: 15)."
+    )
+    parser.add_argument(
+        "--shape_loss_weight",
+        type=float,
+        default=None,
+        help="Override shape/reconstruction loss weight in diffusion_cfg (default: None, use config)."
+    )
+    parser.add_argument(
+        "--laplacian_loss_weight",
+        type=float,
+        default=None,
+        help="Override Laplacian smoothness loss weight in diffusion_cfg (default: None, use config)."
+    )
+    parser.add_argument(
+        "--corner_loss_weight",
+        type=float,
+        default=None,
+        help="Override corner loss weight in diffusion_cfg (default: None, use config)."
+    )
+    parser.add_argument(
+        "--contour_loss_weight",
+        type=float,
+        default=None,
+        help="Override contour loss weight in diffusion_cfg (default: None, use config)."
+    )
+    parser.add_argument(
+        "--edge_loss_weight",
+        type=float,
+        default=None,
+        help="Override edge rest-length loss weight in diffusion_cfg (default: None, use config)."
+    )
     args = parser.parse_args()
     
     if args.resume_from_checkpoint == "None":

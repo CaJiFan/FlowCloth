@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from typing import Optional
 import numpy as np
 import pickle
@@ -64,6 +65,10 @@ class TransformerStateEstV3Model(ModelMixin, ConfigMixin):
         self.num_out_frames = num_out_frames
 
         # 1. prepare patch index and patch offset for template
+        if not os.path.exists(patch_file):
+            alt_patch = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "assets", os.path.basename(patch_file))
+            if os.path.exists(alt_patch):
+                patch_file = alt_patch
         with open(patch_file, 'rb') as file:
             data = pickle.load(file)
         patch_index = data['patch_index']

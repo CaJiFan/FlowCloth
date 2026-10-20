@@ -14,6 +14,11 @@ model_cfg:
 diffusion_cfg:
   type: "FlowMatching_StateEst"
   num_train_timesteps: 1000
+  shape_loss_weight: 100.0
+  laplacian_loss_weight: 5.0
+  corner_loss_weight: 2.5
+  contour_loss_weight: 0.0
+  edge_loss_weight: 0.0
 
 wandb_cfg:
   project_name: "UniClothDiff_TRTM"

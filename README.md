@@ -55,7 +55,7 @@ Once the visual tracking is stable, use the deployment script to publish the tem
 ```bash
 # Start the live inference ROS publisher
 python3 deployment/kinova_cloth_inference.py \
-  --ckpt_dir path/to/your/checkpoint \
+  --exp_dir checkpoints/trtm_fm_edge \
   --ros \
   --ema_alpha 0.3
 ```

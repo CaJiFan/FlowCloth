@@ -49,10 +49,12 @@ Usage — offline (saved PNG)
 
 from __future__ import annotations
 
+import os
 import numpy as np
 import cv2
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
+from scipy.spatial import cKDTree
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRTM / Camera constants  (must match orbbec_frame.py calibration session)
@@ -295,15 +297,24 @@ class OrbbecDepthProcessor:
         fy: float = DEPTH_FY_DEFAULT,
         cx: float = DEPTH_CX_DEFAULT,
         cy: float = DEPTH_CY_DEFAULT,
+        arm_depth_offset_mm: float = 0.0,
+        inpaint_radius: int = 15,
     ):
-        self.num_sample_points = num_sample_points
-        self.crop_size         = crop_size
-        self.seg_threshold     = seg_threshold
-        self.offset_mm         = offset_mm
+        self.num_sample_points   = num_sample_points
+        self.crop_size           = crop_size
+        self.seg_threshold       = seg_threshold
+        self.offset_mm           = offset_mm
         self.fx = fx
         self.fy = fy
         self.cx = cx
         self.cy = cy
+        # Robot arm occlusion handling
+        # arm_depth_offset_mm > 0 enables masking: any pixel within the cloth
+        # region that is more than `arm_depth_offset_mm` mm *closer* to the
+        # camera than the estimated cloth surface is treated as robot arm and
+        # removed. The resulting holes are filled by depth inpainting.
+        self.arm_depth_offset_mm = arm_depth_offset_mm
+        self.inpaint_radius      = inpaint_radius
 
         # Live-capture state (populated by start())
         self._pipeline       = None
@@ -390,6 +401,7 @@ class OrbbecDepthProcessor:
         self,
         depth_raw_mm: np.ndarray,   # uint16 [H, W] in mm
         color_bgr:    np.ndarray,   # uint8  [H, W, 3]
+        prev_mesh:    Optional[np.ndarray] = None, # [N, 3] mm
     ) -> dict:
         """
         Run the full pre-processing pipeline on raw depth + color arrays.
@@ -410,6 +422,54 @@ class OrbbecDepthProcessor:
         masked_smooth = depth_smooth * binary_mask    # float32
         masked_raw    = depth_filled * binary_mask    # uint16
 
+        # Stage 3b: Robot arm occlusion removal + depth inpainting (optional)
+        arm_mask_2d = np.zeros_like(binary_mask, dtype=np.uint8)  # for debug output
+        if self.arm_depth_offset_mm > 0 and np.any(binary_mask > 0):
+            arm_candidate = np.zeros_like(binary_mask, dtype=bool)
+            
+            if prev_mesh is not None:
+                # Strategy 1: Temporal Mesh Masking (using 3D KDTree)
+                ys, xs = np.where(depth_smooth > 0)
+                if len(ys) > 0:
+                    zs = depth_smooth[ys, xs].astype(np.float32)
+                    X = (xs.astype(np.float32) - self.cx) / self.fx * zs
+                    Y = (ys.astype(np.float32) - self.cy) / self.fy * zs
+                    pts_3d = np.stack([X, Y, zs], axis=1)
+                    
+                    tree = cKDTree(prev_mesh)
+                    _, idx = tree.query(pts_3d)
+                    nearest_mesh_z = prev_mesh[idx, 2]
+                    nearest_mesh_X = prev_mesh[idx, 0]
+                    nearest_mesh_Y = prev_mesh[idx, 1]
+                    dist_xy_sq = (X - nearest_mesh_X)**2 + (Y - nearest_mesh_Y)**2
+                    
+                    arm_pts_mask = (zs < nearest_mesh_z - self.arm_depth_offset_mm) & (dist_xy_sq < 10000)
+                    arm_candidate[ys[arm_pts_mask], xs[arm_pts_mask]] = True
+                    
+                    if np.any(arm_candidate):
+                        print(f"[OrbbecDepthProcessor] Temporal Arm Mask: removed {int(arm_candidate.sum())} px "
+                              f"(threshold={self.arm_depth_offset_mm:.0f} mm).")
+            else:
+                # Estimate cloth surface depth: use 40th percentile of valid cloth pixels
+                cloth_depths = masked_smooth[binary_mask > 0]
+                cloth_depths_valid = cloth_depths[cloth_depths > 0]
+                if len(cloth_depths_valid) > 100:
+                    cloth_surface_z = float(np.percentile(cloth_depths_valid, 40))
+                    # Arm pixels: within cloth mask region, closer than cloth surface by threshold
+                    arm_candidate = (
+                        (depth_smooth > 0) &
+                        (depth_smooth < cloth_surface_z - self.arm_depth_offset_mm) &
+                        (binary_mask > 0)
+                    )
+                    if np.any(arm_candidate):
+                        print(f"[OrbbecDepthProcessor] Percentile Arm Mask: removed {int(arm_candidate.sum())} px "
+                              f"(cloth surface z={cloth_surface_z:.0f} mm, "
+                              f"threshold={self.arm_depth_offset_mm:.0f} mm).")
+
+            if np.any(arm_candidate):
+                arm_mask_2d = arm_candidate.astype(np.uint8)
+                binary_mask[arm_candidate] = 0  # Completely erase arm from cloth mask
+                masked_smooth = depth_smooth * binary_mask
         # Stage 4: TRTM encoding
         trtm_gray, _trtm_vis, table_z = apply_trtm_shading(
             masked_smooth, background_mask, offset_mm=self.offset_mm
@@ -431,8 +491,13 @@ class OrbbecDepthProcessor:
             print("[OrbbecDepthProcessor] WARNING: no valid cloth points found!")
             pts_3d = np.zeros((1, 3), np.float32)
 
+        # Stage 6b: Convert Z from depth to height coordinates for parity with TRTM training
+        pts_3d_height = pts_3d.copy()
+        if not (len(pts_3d) == 1 and np.all(pts_3d == 0)):
+            pts_3d_height[:, 2] = table_z - pts_3d[:, 2]
+
         # Stage 7: Normalise
-        pts_norm, com, scale = normalise_pcd(pts_3d)
+        pts_norm, com, scale = normalise_pcd(pts_3d_height)
 
         # Stage 8: Subsample to model input size
         pcd = subsample_pcd(pts_norm, self.num_sample_points, self._rng)
@@ -447,6 +512,8 @@ class OrbbecDepthProcessor:
             "trtm_image":   trtm_cropped,               # [720,720] uint8
             "depth_raw_mm": masked_raw,                 # [H,W] uint16
             "cloth_mask":   binary_mask,                # [H,W] uint8
+            "color_bgr":    color_bgr,                  # [H,W,3] uint8
+            "arm_mask":     arm_mask_2d,                # [H,W] uint8 — arm pixels (0 if masking disabled)
             "n_cloth_pts":  len(pts_3d),
         }
 
@@ -454,7 +521,7 @@ class OrbbecDepthProcessor:
     # Live capture
     # ------------------------------------------------------------------
 
-    def capture_and_process(self, timeout_ms: int = 2000) -> dict:
+    def capture_and_process(self, timeout_ms: int = 2000, prev_mesh: Optional[np.ndarray] = None) -> dict:
         """
         Capture one depth+color frame from the live Orbbec camera and process it.
 
@@ -498,7 +565,7 @@ class OrbbecDepthProcessor:
             if color_bgr.shape[:2] != (dh, dw):
                 color_bgr = cv2.resize(color_bgr, (dw, dh))
 
-            return self._process_raw_frames(depth_raw_mm, color_bgr)
+            return self._process_raw_frames(depth_raw_mm, color_bgr, prev_mesh=prev_mesh)
 
         raise RuntimeError(
             f"Could not capture a valid frame after {20} attempts "
@@ -513,6 +580,7 @@ class OrbbecDepthProcessor:
         self,
         depth_path: str,
         color_path: Optional[str] = None,
+        prev_mesh: Optional[np.ndarray] = None,
     ) -> dict:
         """
         Process a saved depth PNG (uint16, values in mm as written by orbbec_frame.py).
@@ -548,7 +616,7 @@ class OrbbecDepthProcessor:
         if color_bgr.shape[:2] != (dh, dw):
             color_bgr = cv2.resize(color_bgr, (dw, dh))
 
-        return self._process_raw_frames(depth_raw_mm, color_bgr)
+        return self._process_raw_frames(depth_raw_mm, color_bgr, prev_mesh=prev_mesh)
 
     # ------------------------------------------------------------------
     # Utility: recover metric coordinates from normalised prediction
@@ -559,6 +627,7 @@ class OrbbecDepthProcessor:
         pred_norm: np.ndarray,   # [N, 3] normalised
         com: np.ndarray,         # [3] mm
         scale: float,            # mm
+        table_depth_mm: Optional[float] = None,
     ) -> np.ndarray:
         """
         Convert model output (normalised [N,3]) back to camera-frame mm.
@@ -567,11 +636,14 @@ class OrbbecDepthProcessor:
         -----
         result    = proc.capture_and_process()
         pred_mm   = OrbbecDepthProcessor.denormalise_prediction(
-                        pred[0], result["com"], result["scale"]
+                        pred[0], result["com"], result["scale"], result["table_depth_mm"]
                     )
         corners_mm = pred_mm[corner_indices]  # [4, 3] in mm, camera frame
         """
-        return pred_norm * scale + com
+        pred_mm = pred_norm * scale + com
+        if table_depth_mm is not None:
+            pred_mm[:, 2] = table_depth_mm - pred_mm[:, 2]
+        return pred_mm
 
 
 # ─────────────────────────────────────────────────────────────────────────────

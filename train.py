@@ -58,10 +58,11 @@ def setup_accelerator(project_dir: str,
     
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
     
+    log_with = None if logs_report_to in [None, "None", "none", ""] else logs_report_to
     accelerator = Accelerator(
         gradient_accumulation_steps=gradient_accumulation_steps,
         mixed_precision=mixed_precision,
-        log_with=logs_report_to,
+        log_with=log_with,
         project_config=accelerator_project_config,
         kwargs_handlers=[ddp_kwargs]
     )
@@ -150,7 +151,19 @@ def main():
 
     seed_everything(int(config.seed))
     
-    diffusion_scheduler = build_scheduler(OmegaConf.to_container(config.diffusion_cfg))
+    diff_cfg = OmegaConf.to_container(config.diffusion_cfg)
+    if getattr(args, "shape_loss_weight", None) is not None:
+        diff_cfg["shape_loss_weight"] = args.shape_loss_weight
+    if getattr(args, "laplacian_loss_weight", None) is not None:
+        diff_cfg["laplacian_loss_weight"] = args.laplacian_loss_weight
+    if getattr(args, "corner_loss_weight", None) is not None:
+        diff_cfg["corner_loss_weight"] = args.corner_loss_weight
+    if getattr(args, "contour_loss_weight", None) is not None:
+        diff_cfg["contour_loss_weight"] = args.contour_loss_weight
+    if getattr(args, "edge_loss_weight", None) is not None:
+        diff_cfg["edge_loss_weight"] = args.edge_loss_weight
+
+    diffusion_scheduler = build_scheduler(diff_cfg)
     
     if config.pretrained_model_name_or_path:
         model_cls = getattr(importlib.import_module("uniclothdiff.models"), config.model_cfg.type)
@@ -273,8 +286,10 @@ def main():
     
     # length of dataloader may change after prepared with accelerator
     num_update_step_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
-    config.max_train_steps = config.num_train_epochs * num_update_step_per_epoch
-    config.num_train_epochs = math.ceil(config.max_train_steps / num_update_step_per_epoch)
+    if config.max_train_steps is None or config.max_train_steps <= 0:
+        config.max_train_steps = config.num_train_epochs * num_update_step_per_epoch
+    else:
+        config.num_train_epochs = math.ceil(config.max_train_steps / num_update_step_per_epoch)
 
     config.do_classifier_free_guidance = False
     
@@ -313,7 +328,7 @@ def main():
         else:
             # Get the most recent checkpoint
             dirs = os.listdir(checkpoints_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
+            dirs = [d for d in dirs if d.startswith("checkpoint") and len(d.split("-")) > 1 and d.split("-")[1].isdigit()]
             dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
             path = dirs[-1] if len(dirs) > 0 else None
 
@@ -350,6 +365,15 @@ def main():
 
 
     stop_training = False
+    
+    # Early stopping setup
+    best_val_score = float('inf')
+    patience_counter = 0
+    patience_limit = getattr(config, "patience_limit", 15)
+    use_hybrid = getattr(config, "use_hybrid_patience_loss", False)
+    early_stop_triggered = False
+    metric_label = "hybrid (corner + 1.5*chamfer)" if use_hybrid else "corner error"
+    logger.info(f"Early stopping metric: {metric_label}, patience: {patience_limit}")
     for epoch in range(first_epoch, config.num_train_epochs):
         if stop_training:
             break
@@ -418,16 +442,22 @@ def main():
                     "loss": f"{train_loss:.4f}",
                     "lr": f"{current_lr:.2e}"
                 }
+                if hasattr(diffusion_scheduler, "last_loss_corner") and diffusion_scheduler.last_loss_corner > 0:
+                    pbar_updates["corn"] = f"{diffusion_scheduler.last_loss_corner:.4f}"
+                if hasattr(diffusion_scheduler, "last_loss_edge") and diffusion_scheduler.last_loss_edge > 0:
+                    pbar_updates["edge"] = f"{diffusion_scheduler.last_loss_edge:.4f}"
+                if hasattr(diffusion_scheduler, "last_loss_laplacian") and diffusion_scheduler.last_loss_laplacian > 0:
+                    pbar_updates["lapl"] = f"{diffusion_scheduler.last_loss_laplacian:.4f}"
                 progress_bar.set_postfix(pbar_updates)
 
                 accelerator.log({"train/loss": train_loss}, step=global_step)
                 accelerator.log({"train/learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
                 # Log per-component losses from the diffusion scheduler if available
                 comp_logs = {}
-                if hasattr(diffusion_scheduler, "last_loss_noise") and diffusion_scheduler.last_loss_noise is not None:
-                    comp_logs["train/loss_noise"] = diffusion_scheduler.last_loss_noise
-                if hasattr(diffusion_scheduler, "last_loss_shape") and diffusion_scheduler.last_loss_shape is not None:
-                    comp_logs["train/loss_shape"] = diffusion_scheduler.last_loss_shape
+                for attr in ["last_loss_noise", "last_loss_vel", "last_loss_shape", "last_loss_corner", "last_loss_contour", "last_loss_edge", "last_loss_laplacian"]:
+                    if hasattr(diffusion_scheduler, attr) and getattr(diffusion_scheduler, attr) is not None:
+                        tag = attr.replace("last_", "")
+                        comp_logs[f"train/{tag}"] = getattr(diffusion_scheduler, attr)
                 if len(comp_logs) > 0:
                     accelerator.log(comp_logs, step=global_step)
                 train_loss = 0.0
@@ -440,7 +470,7 @@ def main():
                         os.makedirs(checkpoints_dir)
                     checkpoints = os.listdir(checkpoints_dir)
                     checkpoints = [
-                        d for d in checkpoints if d.startswith("checkpoint")]
+                        d for d in checkpoints if d.startswith("checkpoint") and len(d.split("-")) > 1 and d.split("-")[1].isdigit()]
                     checkpoints = sorted(
                         checkpoints, key=lambda x: int(x.split("-")[1]))
 
@@ -473,22 +503,24 @@ def main():
                     
                     if "StateEst" in config.model_cfg.type:
                         use_flow_matching = "FlowMatching" in config.diffusion_cfg.type
+                        sched = accelerator.unwrap_model(diffusion_scheduler) if isinstance(diffusion_scheduler, torch.nn.Module) else diffusion_scheduler
                         if use_flow_matching:
                             pipeline = ClothStateEstFMPipeline(
                                 model=accelerator.unwrap_model(model),
-                                scheduler=accelerator.unwrap_model(diffusion_scheduler)
+                                scheduler=sched
                             )
                         else:
                             pipeline = ClothStateEstPipeline(
                                 model=accelerator.unwrap_model(model),
-                                scheduler=accelerator.unwrap_model(diffusion_scheduler)
+                                scheduler=sched
                             )
                         is_dynamics = False
                     else:
                         from uniclothdiff.pipelines import ClothDynamicsPipeline
+                        sched = accelerator.unwrap_model(diffusion_scheduler) if isinstance(diffusion_scheduler, torch.nn.Module) else diffusion_scheduler
                         pipeline = ClothDynamicsPipeline(
                             model=accelerator.unwrap_model(model),
-                            scheduler=accelerator.unwrap_model(diffusion_scheduler)
+                            scheduler=sched
                         )
                         is_dynamics = True
 
@@ -513,7 +545,7 @@ def main():
                         num_sample_batches = 0
 
                         for val_step, val_batch in enumerate(valid_dataloader):
-                            if val_step >= 5: # evaluate up to 5 batches for speed
+                            if val_step >= 50: # evaluate up to 50 batches for early stopping signal stability
                                 break
                             # val_batch = sanity_batch.copy()
                             batch_size = val_batch['pcd'].shape[0] if not is_dynamics else val_batch['q_prev'].shape[0]
@@ -569,11 +601,11 @@ def main():
                                     pred_pc = pred[0]  
                                     gt_pc = target[0]  
                                     
-                                    accelerator.log({
-                                        "val/point_cloud_pred": wandb.Object3D(pred_pc),
-                                        "val/point_cloud_gt": wandb.Object3D(gt_pc),
-                                        # "val/camera_input_pcd": wandb.Object3D(pcd[0].cpu().numpy())
-                                    }, step=global_step)
+                                    # accelerator.log({
+                                    #     "val/point_cloud_pred": wandb.Object3D(pred_pc),
+                                    #     "val/point_cloud_gt": wandb.Object3D(gt_pc),
+                                    #     # "val/camera_input_pcd": wandb.Object3D(pcd[0].cpu().numpy())
+                                    # }, step=global_step)
 
                                     # spatial_spread = pred.std(dim=1).mean().item()
                                     spatial_spread = pred.std(axis=1).mean().item()
@@ -615,10 +647,36 @@ def main():
                     del pipeline
                     torch.cuda.empty_cache()
 
-                    if global_step >= 251000:
-                        print("Max step reached, ending training...")
-                        stop_training = True
-                        break
+                    # Early Stopping Logic
+                    if use_hybrid:
+                        current_score = sample_corner_error + 1.5 * sample_chamfer_error
+                    else:
+                        current_score = sample_corner_error
+
+                    if current_score < best_val_score:
+                        best_val_score = current_score
+                        patience_counter = 0
+                        logger.info(f"New best {metric_label}: {best_val_score:.6f}. Saving best model...")
+                        if accelerator.is_main_process:
+                            best_save_path = os.path.join(checkpoints_dir, "checkpoint-best")
+                            if os.path.exists(best_save_path):
+                                shutil.rmtree(best_save_path)
+                            accelerator.save_state(best_save_path)
+                    else:
+                        patience_counter += 1
+                        logger.info(f"{metric_label.capitalize()} did not improve ({current_score:.6f} > {best_val_score:.6f}). Patience: {patience_counter}/{patience_limit}")
+                        
+                        if patience_counter >= patience_limit:
+                            logger.info(f"Early stopping triggered after {global_step} steps!")
+                            if accelerator.is_main_process:
+                                print(f"Early stopping triggered at step {global_step}! Final validation {metric_label}: {current_score:.6f}")
+                            early_stop_triggered = True
+                            stop_training = True
+                            break
+                
+                if early_stop_triggered or global_step >= config.max_train_steps:
+                    stop_training = True
+                    break
                 
                 # if global_step % config.sampling_steps == 0 or global_step == 1:
                 #     accelerator.wait_for_everyone()
@@ -628,24 +686,3 @@ def main():
     accelerator.end_training()
 if __name__ == "__main__":
     main()
-
-
-
-
-# python scripts/train.py \
-#   --data_dir=/home/cjimenez/Projects/Tracking/Code/TrackAnyCloth/TRTM/datasets/template_square \
-#   --per_gpu_batch_size=256 \
-#   --num_train_epochs=500 \
-#   --checkpointing_steps=2000 \
-#   --checkpoints_total_limit=10 \
-#   --gradient_accumulation_steps=8 \
-#   --learning_rate=1e-4 \
-#   --lr_warmup_steps=500 \
-#   --lr_scheduler="cosine" \
-#   --seed=1 \
-#   --num_workers=12 \
-#   --mixed_precision="fp16" \
-#   --exp_name="vr_tracking_mode" \
-#   --resume_from_checkpoint="latest" \
-#   --pretrained_model_name_or_path="None" \
-#   --config="configs/train_state_est_full.yaml" 

@@ -1,0 +1,5 @@
+Model,Sym_Chamfer_mm,Sym_Chamfer_std,F1_10mm_pct,F1_20mm_pct,Contour_Err_mm,Contour_std,Latency_ms,Latency_std,FPS
+TRTM Baseline,118.585,5.359,0.08,0.33,258.343,9.387,18.50,1.50,6.83
+Diffusion Baseline (DDPM),17.255,3.298,26.38,79.64,61.715,13.083,239.19,2.71,2.75
+FlowCloth Full (FM 441),19.242,2.954,15.59,68.72,49.357,6.830,115.49,1.35,4.19
+ContourFlowCloth (FM Edge 80),80.269,3.798,1.60,9.21,49.098,6.569,111.07,3.64,4.19

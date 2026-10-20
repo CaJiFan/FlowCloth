@@ -312,6 +312,8 @@ def main():
             cam_fx, cam_fy, cam_cx, cam_cy = DEPTH_FX_DEFAULT, DEPTH_FY_DEFAULT, DEPTH_CX_DEFAULT, DEPTH_CY_DEFAULT
             print("Could not read intrinsics. Using defaults.")
 
+        processor = OrbbecDepthProcessor(fx=cam_fx, fy=cam_fy, cx=cam_cx, cy=cam_cy)
+
     except Exception as e:
         print(f"Init Error: {e}")
         return
@@ -414,7 +416,22 @@ def main():
                 inference_view_raw = masked_color.copy()
                 
                 if len(pts_3d) > 0:
-                    pts_norm, com, scale = normalise_pcd(pts_3d)
+                    # Fit Table Plane
+                    A, B, C = processor.fit_table_plane(depth_smooth, background_mask, pts_3d)
+                    table_plane = (A, B, C)
+
+                    # Convert Z from depth to height coordinates using the fitted table plane
+                    pts_3d_height = pts_3d.copy()
+                    z_table = A * pts_3d[:, 0] + B * pts_3d[:, 1] + C
+                    pts_3d_height[:, 2] = z_table - pts_3d[:, 2]
+
+                    # Prune outliers (heights < -10mm or heights > 80mm)
+                    mask_valid = (pts_3d_height[:, 2] >= -10.0) & (pts_3d_height[:, 2] <= 80.0)
+                    if np.any(mask_valid):
+                        pts_3d_height = pts_3d_height[mask_valid]
+                        pts_3d = pts_3d[mask_valid]
+
+                    pts_norm, com, scale = normalise_pcd(pts_3d_height)
                     pcd_input = subsample_pcd(pts_norm, 400)
                     
                     # Run model
@@ -423,7 +440,9 @@ def main():
                     t_inf = (time.time() - t0) * 1000
                     
                     # Back-project to 2D
-                    pred_mm = OrbbecDepthProcessor.denormalise_prediction(pred_norm, com, scale)
+                    pred_mm = OrbbecDepthProcessor.denormalise_prediction(
+                        pred_norm, com, scale, table_plane=table_plane
+                    )
                     uvs = project_to_2d(pred_mm, cam_fx, cam_fy, cam_cx, cam_cy)
                     
                     # Draw on the raw uncropped image
