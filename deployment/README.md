@@ -6,23 +6,33 @@ Scripts for running FlowCloth live with an Orbbec RGB-D camera and publishing cl
 
 - **Environment:** follow the installation steps in the [root README](../README.md#2-installation-with-ros-2-support) (`.venv` created with `--system-site-packages`). The [Dockerfile](../Dockerfile) builds a ready-made ROS 2 Humble image.
 - **Run from the repo root.** The scripts import each other as top-level modules, so call them as `python3 deployment/<script>.py ...`.
-- **FlowCloth / UniClothDiff checkpoints:** put each experiment in `checkpoints/<exp>/` with `config.yml` and `checkpoints/checkpoint-*`. Download links are in the [root README](../README.md#1-download-checkpoints). The scripts read `config.yml` to tell FM from DDPM and full from edge mode.
-- **TRTM baseline checkpoint:** `checkpoint_large_size.pt`. Pass it with `--ckpt` / `--trtm_ckpt`; the default path is `/home/cjimenez/Downloads/checkpoint_large_size.pt`. Its template and edges are in `assets/trtm_large/`.
+- **FlowCloth / UniClothDiff checkpoints:** put each experiment in `checkpoints/<exp>/` with `config.yml` and `checkpoints/checkpoint-*`. Download links are in the [root README](../README.md#1-download-checkpoints). The scripts read `config.yml` to tell FM from DDPM and full from edge mode. The examples below use these checkpoints:
+
+  | Model | Experiment directory |
+  |---|---|
+  | FlowCloth (full mesh, 441 nodes) | `checkpoints/ablation_fm_lapl_w1.0_s1/` |
+  | Contour-FlowCloth (edge, 80 nodes) | `checkpoints/ablation_fm_edge_lapl_w1.0_s1/` |
+  | UniClothDiff (DDPM baseline) | `checkpoints/ablation_diff_sw0_s1/` |
+
+- **TRTM baseline checkpoint:** `checkpoint_large_size.pt`. The default path is `/home/cjimenez/Downloads/checkpoint_large_size.pt`; pass `--ckpt` / `--trtm_ckpt` to use another one. Its template and edges are in `assets/trtm_large/`.
 
 ## 1. Calibration and visual debugging
 
-Use the overlay GUIs to check the camera setup and tracking before you involve the robot.
+Use the overlay GUIs to check the camera setup and tracking before you involve the robot. They take the checkpoint folder itself (`.../checkpoints/checkpoint-best`), not the experiment directory.
 
 ```bash
-# FlowCloth / UniClothDiff, single model
-python3 deployment/orbbec_overlay_3d.py --ckpt_dir checkpoints/<exp> --mode edge --num_steps 10
+# FlowCloth, single model
+python3 deployment/orbbec_overlay_3d.py \
+  --ckpt_dir checkpoints/ablation_fm_lapl_w1.0_s1/checkpoints/checkpoint-best --mode full --num_steps 10
 
 # Full and edge models side by side
 python3 deployment/orbbec_overlay_3d.py \
-  --ckpt_dir_full checkpoints/<full_exp> --ckpt_dir_edge checkpoints/<edge_exp> --num_steps 10
+  --ckpt_dir_full checkpoints/ablation_fm_lapl_w1.0_s1/checkpoints/checkpoint-best \
+  --ckpt_dir_edge checkpoints/ablation_fm_edge_lapl_w1.0_s1/checkpoints/checkpoint-best \
+  --num_steps 10
 
 # TRTM GNN baseline
-python3 deployment/trtm_orbbec_overlay.py --ckpt /path/to/checkpoint_large_size.pt
+python3 deployment/trtm_orbbec_overlay.py --ckpt /home/cjimenez/Downloads/checkpoint_large_size.pt
 ```
 
 In the GUI:
@@ -30,41 +40,18 @@ In the GUI:
 2. The windows show the live RGB, the TRTM-shaded depth and the predicted mesh overlaid on the cloth.
 3. Press `S` to save a calibration frame (to `trtm_data_calibrated_<timestamp>/`). Press `Q` / `ESC` to quit.
 
-Useful flags: `--ema_alpha` (temporal smoothing, default `0.3`), `--max_depth` (mm cutoff to drop the floor), `--disable_plane`, `--disable_pruning` and `--tta_rotations 4` (test-time yaw rotations). `trtm_orbbec_overlay.py` also accepts the ROS flags from [section 3](#3-ros-publishing-and-udp-bridges).
+Useful flags: `--ema_alpha` (temporal smoothing, default `0.3`), `--max_depth` (mm cutoff to drop the floor), `--disable_plane`, `--disable_pruning` and `--tta_rotations 4` (test-time yaw rotations). `trtm_orbbec_overlay.py` also accepts the ROS flags from [section 2](#2-ros-udp-bridge-start-this-first).
 
 To print the camera's factory intrinsics:
 ```bash
 python3 deployment/get_orbbec_intrinsics.py
 ```
 
-## 2. Live inference (Kinova)
+## 2. ROS UDP bridge (start this first)
 
-The inference scripts capture frames, estimate the cloth state, extract the 4 corners and optionally publish them to ROS.
+If you publish corners to ROS, start the bridge **before** the inference scripts in [section 3](#3-live-inference-kinova).
 
-```bash
-# FlowCloth / UniClothDiff (FM vs DDPM and edge vs full are auto-detected from config.yml)
-python3 deployment/kinova_cloth_inference.py --exp_dir checkpoints/<exp> --ros --ema_alpha 0.3
-
-# TRTM GNN baseline
-python3 deployment/trtm_cloth_inference.py --ckpt /path/to/checkpoint_large_size.pt --ros
-```
-
-- **Topic:** `/cloth_corners` (`geometry_msgs/PoseArray`). Each pose holds one corner in metres, in the camera frame (`--ros_frame`, default `camera_depth_optical_frame`). Your `tf2` tree handles the camera-to-base transform. To publish in the robot base frame instead, pass `--cam_to_base` with the 16 row-major values of the 4×4 transform.
-- **`--ema_alpha`** sets temporal smoothing: `0.1` is smooth but laggy, `0.9` is fast but jittery, and `1.0` turns it off.
-- **`--arm_depth_offset 60`–`100`** masks out the robot arm: cloth pixels that are this many mm closer to the camera than the cloth surface get inpainted. The default `0` disables it.
-- **`--num_steps`** sets the number of sampling steps. It defaults to 10 for FM and 100 for DDPM. `--step <int>` loads a specific checkpoint instead of `latest`.
-- **`--no_gui`** runs headless. `--save_dir <dir>` saves per-frame `.npz` files (pcd, prediction, corners).
-
-Both scripts also run offline on saved frames:
-```bash
-python3 deployment/kinova_cloth_inference.py --exp_dir checkpoints/<exp> \
-  --depth_png trtm_data_calibrated_<ts>/depth_raw_00000.png \
-  --color_png trtm_data_calibrated_<ts>/color_00000.png      # add --loop to repeat
-```
-
-## 3. ROS publishing and UDP bridges
-
-`--ros` first tries to publish natively from the venv with `rospy`. If that import fails, it falls back to sending JSON over UDP to `127.0.0.1:9876`. This happens, for example, when the venv's Python doesn't match the system ROS Python (3.10 vs 3.8). A bridge running under the system Python then republishes the data to ROS.
+`--ros` first tries to publish natively from the venv with `rospy`. If that import fails, it falls back to sending JSON over UDP to `127.0.0.1:9876`. This happens, for example, when the venv's Python doesn't match the system ROS Python (3.10 vs 3.8). The bridge runs under the system Python and republishes the data to ROS.
 
 - `kinova_cloth_inference.py` falls back to UDP automatically.
 - `trtm_cloth_inference.py` and `trtm_orbbec_overlay.py` also accept `--udp` to force the UDP path. They accept `--udp_port` too, but the bridges are hard-coded to `9876`.
@@ -81,14 +68,43 @@ source /opt/ros/foxy/setup.bash
 python3 deployment/ros2_udp_bridge.py
 ```
 
-Then start the inference in the venv terminal, e.g. `python3 deployment/kinova_cloth_inference.py --exp_dir checkpoints/<exp> --ros`. Check the output with `rostopic echo /cloth_corners` (ROS 1) or `ros2 topic echo /cloth_corners` (ROS 2).
+Once the inference is running, check the output with `rostopic echo /cloth_corners` (ROS 1) or `ros2 topic echo /cloth_corners` (ROS 2).
+
+## 3. Live inference (Kinova)
+
+The inference scripts capture frames, estimate the cloth state, extract the 4 corners and optionally publish them to ROS. Run them in the venv terminal.
+
+```bash
+# FlowCloth (FM vs DDPM and edge vs full are auto-detected from config.yml)
+python3 deployment/kinova_cloth_inference.py \
+  --exp_dir checkpoints/ablation_fm_lapl_w1.0_s1/ --step best --ros --ema_alpha 0.3
+
+# TRTM GNN baseline (--udp forces the bridge path)
+python3 deployment/trtm_cloth_inference.py --ckpt /home/cjimenez/Downloads/checkpoint_large_size.pt --ros --udp
+```
+
+- **Topic:** `/cloth_corners` (`geometry_msgs/PoseArray`). Each pose holds one corner in metres, in the camera frame (`--ros_frame`, default `camera_depth_optical_frame`). Your `tf2` tree handles the camera-to-base transform. To publish in the robot base frame instead, pass `--cam_to_base` with the 16 row-major values of the 4×4 transform.
+- **`--step`** picks the checkpoint: `best` loads `checkpoint-best`, an integer loads that step, and `latest` (the default) also prefers `checkpoint-best` when it exists.
+- **`--ema_alpha`** sets temporal smoothing: `0.1` is smooth but laggy, `0.9` is fast but jittery, and `1.0` turns it off.
+- **`--arm_depth_offset 60`–`100`** masks out the robot arm: cloth pixels that are this many mm closer to the camera than the cloth surface get inpainted. The default `0` disables it.
+- **`--num_steps`** sets the number of sampling steps. It defaults to 10 for FM and 100 for DDPM.
+- **`--no_gui`** runs headless. `--save_dir <dir>` saves per-frame `.npz` files (pcd, prediction, corners).
+
+Both scripts also run offline on saved frames:
+```bash
+python3 deployment/kinova_cloth_inference.py --exp_dir checkpoints/ablation_fm_lapl_w1.0_s1/ --step best \
+  --depth_png trtm_data_calibrated_20260910_103728/depth_raw_00000.png \
+  --color_png trtm_data_calibrated_20260910_103728/color_00000.png      # add --loop to repeat
+```
 
 ## 4. Recording rollouts
 
 Both inference scripts can record real-robot rollouts to `rollouts/rollout_YYYYMMDD_HHMMSS/`. A rollout contains `depth/`, `color/`, `rollout_data.npz`, live metrics (`metrics_summary.json`, `metrics_per_frame.csv`) and a video.
 
 ```bash
-python3 deployment/kinova_cloth_inference.py --exp_dir checkpoints/<exp> --ros --record_rollout   # records from start to finish
+# records from start to finish
+python3 deployment/kinova_cloth_inference.py \
+  --exp_dir checkpoints/ablation_fm_lapl_w1.0_s1/ --step best --ros --record_rollout
 ```
 Without `--record_rollout`, press `R` in the overlay window to start or stop a recording. `--rollout_dir` changes the output folder.
 
@@ -99,7 +115,7 @@ The live metrics come from the older `rollout_recorder.py`. For reported numbers
 ### 5.1 Label corners (optional, needed for the corner-error metric)
 
 ```bash
-python3 deployment/label_corners.py --rollout rollouts/<rollout> --every 20
+python3 deployment/label_corners.py --rollout rollouts/rollout_20260915_170314 --every 20
 ```
 Click every visible corner and skip the ones hidden by folds or the arm. Corner identity doesn't matter because matching is permutation-invariant. Labels are saved to `<rollout>/corner_labels.json`.
 Controls: left click adds a corner, right click removes the nearest one, `SPACE`/`n` saves and moves to the next frame, `b` goes back, `c` clears the frame, and `q`/`ESC` saves and quits.
@@ -108,10 +124,10 @@ Controls: left click adds a corner, right click removes the nearest one, `SPACE`
 
 ```bash
 python3 deployment/benchmark_rollouts.py --models trtm ddpm@100 fm_full@4 fm_edge@4 \
-  --rollouts_glob "rollouts/rollout_20260915_*" --output_dir evaluation_reports/benchmark_replay_<date>
+  --rollouts_glob "rollouts/rollout_20260915_*" --output_dir evaluation_reports/benchmark_replay_20261020
 ```
 
-- **Models** are given as `<key>@<steps>`. The keys are `trtm`, `ddpm`, `fm_full` and `fm_edge`. Their checkpoint directories are set in `MODEL_REGISTRY` at the top of `benchmark_rollouts.py`.
+- **Models** are given as `<key>@<steps>`. The keys are `trtm`, `ddpm`, `fm_full` and `fm_edge`. They map to the checkpoints in the [Prerequisites](#prerequisites) table through `MODEL_REGISTRY` at the top of `benchmark_rollouts.py`.
 - **Inputs:** each frame is preprocessed **once** (seeded) with the live calibration (`--seg_threshold 120 --crop_size 480`), so every model sees identical inputs and ground truth.
 - **Metrics** (from `rollout_metrics.py`):
   - **Ground truth:** the observed arm-free cloth surface and silhouette. Predicted surfaces are resampled to a fixed density.
@@ -132,7 +148,7 @@ Useful flags:
 ### 5.3 Inspect rollouts
 
 ```bash
-python3 deployment/rollout_inspector_gui.py --rollout_dir rollouts/<rollout>   # defaults to the latest rollout
+python3 deployment/rollout_inspector_gui.py --rollout_dir rollouts/rollout_20260915_170314   # defaults to the latest rollout
 ```
 Scrub frames with the slider or `A`/`D`. Other keys:
 - `Space`: play
@@ -147,12 +163,14 @@ Scrub frames with the slider or `A`/`D`. Other keys:
 
 ```bash
 # Browse TRTM dataset samples with model predictions overlaid (no camera needed)
-python3 deployment/trtm_overlay_gui.py --ckpt_dir checkpoints/<exp>/checkpoints/checkpoint-best \
-  --data_dir /path/to/TRTM/template_square --split val --mode full --num_steps 5
+python3 deployment/trtm_overlay_gui.py \
+  --ckpt_dir checkpoints/ablation_fm_lapl_w1.0_s1/checkpoints/checkpoint-best \
+  --data_dir /mnt/Data/cjimenez/TRTM/datasets/template_square --split val --mode full --num_steps 5
 
 # Run the depth preprocessing on one saved frame
-python3 deployment/orbbec_depth_processor.py --depth trtm_data_calibrated_<ts>/depth_raw_00000.png \
-  --color trtm_data_calibrated_<ts>/color_00000.png
+python3 deployment/orbbec_depth_processor.py \
+  --depth trtm_data_calibrated_20260910_103728/depth_raw_00000.png \
+  --color trtm_data_calibrated_20260910_103728/color_00000.png
 ```
 
 ## File reference
