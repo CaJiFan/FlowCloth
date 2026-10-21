@@ -32,35 +32,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Visual Debugging GUI
-Connect your Orbbec camera and run the master 3D overlay GUI to verify tracking stability:
-
-```bash
-python3 deployment/orbbec_overlay_3d.py \
-  --ckpt_dir path/to/your/checkpoint \
-  --mode edge \
-  --num_steps 10
-```
-
-Inside the GUI:
-1. Adjust the **Zoom** and **Threshold** sliders until the cloth fits properly in the green target box.
-2. The UI will display the live RGB, the TRTM shaded depth, and the live diffusion model predictions overlaid on the cloth.
-3. Press `S` to save a calibration frame, or `Q` / `ESC` to quit.
-
-### 4. Robotic Deployment (Kinova ROS 2 Publisher)
-Once the visual tracking is stable, use the deployment script to publish the temporally-smoothed cloth corners directly to your ROS network for the Kinova arm to grasp. 
-
-*(Note: The script automatically publishes coordinates in the camera frame. Your ROS `tf2` tree will handle the camera-to-base math automatically.)*
-
-```bash
-# Start the live inference ROS publisher
-python3 deployment/kinova_cloth_inference.py \
-  --exp_dir checkpoints/trtm_fm_edge \
-  --ros \
-  --ema_alpha 0.3
-```
-* **Topic Published**: `/cloth_corners` (Type: `geometry_msgs/msg/PoseArray`)
-* **Tracking Stability**: Use `--ema_alpha` to control the temporal smoothing. (e.g. `0.1` is heavily smoothed/laggy, `0.9` is fast/jittery).
+### 3. Live Deployment, ROS Bridges & Benchmarking
+All deployment commands live in **[deployment/README.md](deployment/README.md)**. It covers:
+- the Orbbec calibration / overlay GUIs
+- live Kinova inference (FlowCloth and the TRTM baseline)
+- ROS 1 / ROS 2 publishing via the UDP bridges
+- rollout recording and the offline rollout benchmark
 
 
 ---
