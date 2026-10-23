@@ -1,36 +1,56 @@
 #!/bin/bash
-#SBATCH --job-name=uni_ablation_parallel
-#SBATCH --output=logs/ablation_parallel_%j.out
-#SBATCH --error=logs/ablation_parallel_%j.err
+#SBATCH --job-name=uni_ablation_full
+#SBATCH --output=logs/ablation_full_%j.out
+#SBATCH --error=logs/ablation_full_%j.err
 #SBATCH --gres=gpu:lovelace:1
 #SBATCH --cpus-per-task=40
-#SBATCH --mem=48G
-#SBATCH --time=48:00:00
+#SBATCH --mem=64G
+#SBATCH --time=72:00:00
 
-# Conda environment
 CONDA_ENV=jae
 eval "$(conda shell.bash hook)"
 conda activate ${CONDA_ENV}
 
+export NCCL_P2P_DISABLE=1
+export OMP_NUM_THREADS=1
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024
+export MALLOC_ARENA_MAX=1
+
+# Auto-detect if Slurm assigned a GPU hijacked by an unmanaged rogue process (<30GB free)
+CURRENT_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n 1)
+if [ -n "$CUDA_VISIBLE_DEVICES" ]; then
+  CURRENT_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$CUDA_VISIBLE_DEVICES" 2>/dev/null || echo "$CURRENT_FREE")
+fi
+
+echo "Current assigned GPU free VRAM: ${CURRENT_FREE} MiB"
+
+if [ -z "$CURRENT_FREE" ] || [ "$CURRENT_FREE" -lt 30000 ]; then
+  echo "WARNING: Assigned GPU has only ${CURRENT_FREE}MiB free (rogue process detected!)."
+  BEST_GPU=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -k2 -n -r | head -n 1 | awk -F', ' '{print $1}')
+  BEST_FREE=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "${BEST_GPU}" 2>/dev/null)
+  if [ -n "$BEST_GPU" ] && [ "$BEST_FREE" -ge 30000 ]; then
+    echo "Automatically switching to cleanest GPU ${BEST_GPU} (${BEST_FREE} MiB free)..."
+    export CUDA_VISIBLE_DEVICES=${BEST_GPU}
+  else
+    echo "ERROR: No GPU on this node has sufficient free memory (>= 30GB). Aborting to prevent OOM crash."
+    exit 1
+  fi
+fi
+
 mkdir -p logs
 
-# Experiments to run in parallel on this single 48GB GPU (1 seed each for rapid testing)
+# 3 weight variants for discrete Laplacian on 441-node full mesh
 EXPERIMENTS=(
   "configs/ablation/train_fm_laplacian_w1.0.yaml|fm_lapl_w1.0"
   "configs/ablation/train_fm_laplacian_w5.0.yaml|fm_lapl_w5.0"
   "configs/ablation/train_fm_laplacian_w10.0.yaml|fm_lapl_w10.0"
 )
 
-# Run 1 seed per config as requested for fastest real-world turnaround
 SEED=1
-
-echo "=========================================================="
-echo "Launching ${#EXPERIMENTS[@]} ablation configs in PARALLEL on 1 GPU"
-echo "GPU Model: Lovelace (48GB VRAM) | Seed: ${SEED}"
-echo "=========================================================="
-
-PIDS=()
 BASE_PORT=29500
+PIDS=()
+
+echo "Launching 3 parallel full-mesh ablation jobs on 1 Lovelace GPU..."
 
 for i in "${!EXPERIMENTS[@]}"; do
   CFG_PAIR=${EXPERIMENTS[$i]}
@@ -40,11 +60,8 @@ for i in "${!EXPERIMENTS[@]}"; do
   PORT=$((BASE_PORT + i))
   LOG_FILE="logs/${EXP_NAME}.log"
 
-  echo "[Process $i] Starting: ${EXP_NAME} (config=${CFG}, port=${PORT}) -> ${LOG_FILE}"
+  echo "Starting ${EXP_NAME} on port ${PORT} (config: ${CFG}, log: ${LOG_FILE})..."
 
-  # Memory optimization for concurrent multi-process training on 1 GPU:
-  # per_gpu_batch_size=16 with gradient_accumulation_steps=2 preserves effective batch size 32
-  # while keeping peak VRAM per process ~7 GB (3 processes ≈ 22 GB total, well inside 48 GB).
   accelerate launch \
     --main_process_port ${PORT} \
     --num_processes=1 \
@@ -57,7 +74,7 @@ for i in "${!EXPERIMENTS[@]}"; do
     --gradient_accumulation_steps 2 \
     --num_train_epochs 1000 \
     --use_hybrid_patience_loss \
-    --patience_limit 10 \
+    --patience_limit 8 \
     --learning_rate 1e-4 \
     --lr_warmup_steps 3000 \
     --lr_scheduler "cosine" \
@@ -65,29 +82,25 @@ for i in "${!EXPERIMENTS[@]}"; do
     --checkpointing_steps 25000 \
     --checkpoints_total_limit 1 \
     --sampling_steps 10000 \
+    --max_val_samples 1000 \
     --num_workers 8 \
     --report_to wandb \
     --resume_from_checkpoint "latest" > "${LOG_FILE}" 2>&1 &
 
-  PID=$!
-  PIDS+=($PID)
-  echo "[Process $i] Launched PID ${PID}"
-
-  # Small staggering pause to avoid simultaneous disk I/O burst during template loading
+  PIDS+=($!)
   sleep 10
 done
 
-echo "All ${#PIDS[@]} processes launched in background. Waiting for completion..."
+echo "All 3 background processes running (PIDs: ${PIDS[*]}). Waiting for completion..."
 
-# Wait for all background training processes to finish
-FAIL=0
+FAILED=0
 for pid in "${PIDS[@]}"; do
-  wait $pid || FAIL=1
+  wait $pid || FAILED=1
 done
 
-if [ $FAIL -eq 0 ]; then
-  echo "All parallel training runs finished successfully!"
-else
-  echo "One or more parallel training runs encountered an error. Check logs/ for details."
+if [ $FAILED -ne 0 ]; then
+  echo "ERROR: One or more parallel training runs failed. Check logs in logs/!"
   exit 1
 fi
+
+echo "All experiments finished successfully."

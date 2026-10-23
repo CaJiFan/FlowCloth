@@ -23,33 +23,33 @@ from uniclothdiff.registry import SCHEDULERS
 class FlowMatching_StateEst:
     """
     Conditional Flow Matching scheduler with multi-objective physics and boundary-aware loss:
-      L_total = L_vel + lambda_shape * L_recon + lambda_corner * L_corner + lambda_contour * L_contour + lambda_edge * L_edge
+      L_total = L_vel + lambda_shape * L_recon + lambda_laplacian * L_laplacian + lambda_corner * L_corner + lambda_contour * L_contour + lambda_edge * L_edge
     """
 
     def __init__(
         self,
         num_train_timesteps: int = 1000,
         shape_loss_weight: float = 1.0,
+        laplacian_loss_weight: float = 0.0,
         corner_loss_weight: float = 0.0,
         contour_loss_weight: float = 0.0,
         edge_loss_weight: float = 0.0,
-        laplacian_loss_weight: float = 0.0,
     ):
         self.num_train_timesteps = num_train_timesteps
         self.shape_loss_weight = shape_loss_weight
+        self.laplacian_loss_weight = laplacian_loss_weight
         self.corner_loss_weight = corner_loss_weight
         self.contour_loss_weight = contour_loss_weight
         self.edge_loss_weight = edge_loss_weight
-        self.laplacian_loss_weight = laplacian_loss_weight
 
         # Logging attributes
         self.last_loss_noise = 0.0
         self.last_loss_vel = 0.0
         self.last_loss_shape = 0.0
+        self.last_loss_laplacian = 0.0
         self.last_loss_corner = 0.0
         self.last_loss_contour = 0.0
         self.last_loss_edge = 0.0
-        self.last_loss_laplacian = 0.0
 
     # ------------------------------------------------------------------
     # Training
@@ -211,11 +211,10 @@ class FlowMatching_StateEst:
         else:
             loss_edge = torch.tensor(0.0, device=device)
 
-        # 6. Topology-based Laplacian grid smoothness loss: L_laplacian
+        # 6. Discrete Laplacian Smoothness Loss: L_laplacian (Scale & Aspect-Ratio Invariant)
         if self.laplacian_loss_weight > 0:
             num_nodes = pred_x1_active.shape[1]
             if num_nodes in (441, 400):
-                # 2D Grid Laplacian (interior nodes: harmonic mean of 4 orthogonal neighbors)
                 N = 21 if num_nodes == 441 else 20
                 grid = pred_x1_active.view(batch_size, N, N, 3)
                 center = grid[:, 1:-1, 1:-1, :]
@@ -226,7 +225,6 @@ class FlowMatching_StateEst:
                 lapl = center - 0.25 * (north + south + west + east)
                 loss_laplacian = torch.mean(lapl ** 2)
             elif num_nodes in (80, 76):
-                # 1D Closed Contour Ring Laplacian on straight edge nodes (excluding 90-degree corners)
                 N = 21 if num_nodes == 80 else 20
                 cache_key = f"_cached_neigh_{num_nodes}"
                 if not hasattr(self, cache_key) or getattr(self, cache_key).device != device:
@@ -247,7 +245,7 @@ class FlowMatching_StateEst:
                     non_corners = torch.tensor([i for i in range(num_nodes) if i not in corners], dtype=torch.long, device=device)
                     setattr(self, cache_key, neigh)
                     setattr(self, f"_cached_non_corners_{num_nodes}", non_corners)
-                
+
                 neigh = getattr(self, cache_key)
                 non_corners = getattr(self, f"_cached_non_corners_{num_nodes}")
                 lapl = pred_x1_active[:, non_corners, :] - 0.5 * (pred_x1_active[:, neigh[non_corners, 0], :] + pred_x1_active[:, neigh[non_corners, 1], :])
@@ -262,10 +260,10 @@ class FlowMatching_StateEst:
         self.last_loss_noise = float(loss_vel.detach().cpu().item())
         self.last_loss_vel = self.last_loss_noise
         self.last_loss_shape = float(loss_shape.detach().cpu().item())
+        self.last_loss_laplacian = float(loss_laplacian.detach().cpu().item())
         self.last_loss_corner = float(loss_corner.detach().cpu().item())
         self.last_loss_contour = float(loss_contour.detach().cpu().item())
         self.last_loss_edge = float(loss_edge.detach().cpu().item())
-        self.last_loss_laplacian = float(loss_laplacian.detach().cpu().item())
 
         return total_loss
 

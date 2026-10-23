@@ -24,6 +24,7 @@ class TRTMDiffusionDataset(Dataset):
         self.mode = mode
         if not os.path.exists(data_dir):
             for candidate in [
+                "/home/cjimenez/projects/datasets/TRTM/template_square",
                 "/mnt/Data/cjimenez/TRTM/datasets/template_square",
                 os.path.expanduser("~/projects/datasets/TRTM/template_square"),
                 os.path.expanduser("~/Projects/datasets/TRTM/template_square"),
@@ -266,7 +267,7 @@ class TRTMDiffusionDataset(Dataset):
         zs = d[cloth_mask]                             # raw encoding — not metric!
         pts = np.stack([
             (xs.astype(np.float32) - cx) / fx * zs,
-            -(ys.astype(np.float32) - cy) / fy * zs,  # +Y is forward/UP (matching table frame & simulation mesh)
+            -(ys.astype(np.float32) - cy) / fy * zs,
             zs,
         ], axis=1).astype(np.float32)
         # normalise to zero-mean unit-scale (no mesh GT to anchor COM)
@@ -286,3 +287,4 @@ class TRTMDiffusionDataset(Dataset):
             'q_temp': self.q_template,
             # no q_gt — caller must check for its absence before computing metrics
         }
+

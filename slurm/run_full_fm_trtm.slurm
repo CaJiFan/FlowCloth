@@ -23,8 +23,8 @@ accelerate launch \
   --num_processes=1 \
   --mixed_precision="bf16" \
   train.py \
-  --config="configs/train_state_est_full_fm_trtm.yaml" \
-  --exp_name="trtm_fm_full" \
+  --config="configs/train_fm_boundary_aware.yaml" \
+  --exp_name="trtm_fm_boundary_full" \
   --per_gpu_batch_size=32 \
   --gradient_accumulation_steps=1 \
   --learning_rate=5e-5 \

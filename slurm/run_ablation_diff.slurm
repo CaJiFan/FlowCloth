@@ -6,19 +6,19 @@
 #SBATCH --cpus-per-task=40
 #SBATCH --mem=48G
 #SBATCH --time=48:00:00
-#SBATCH --array=0-5%1
+#SBATCH --array=0-0
 
 # Edit the conda env name below to match your environment (e.g., `jae`)
 CONDA_ENV=jae
 
 # Map array tasks to experiment configs
 EXPERIMENTS=(
-  # "configs/ablation/train_ddpm_orig.yaml|diff_sw0"
+  "configs/ablation/train_ddpm_orig.yaml|diff_sw0"
   # "configs/ablation/train_ddpm_shape_w1.829e-05.yaml|diff_sw1.829e-05"
   # "configs/ablation/train_ddpm_shape_w9.143e-05.yaml|diff_sw9.143e-05"
   # "configs/ablation/train_ddpm_shape_w1.829e-04.yaml|diff_sw1.829e-04"
-  "configs/ablation/train_ddpm_shape_w3.657e-04.yaml|diff_sw3.657e-04"
-  "configs/ablation/train_ddpm_shape_w1.829e-03.yaml|diff_sw1.829e-03"
+  # "configs/ablation/train_ddpm_shape_w3.657e-04.yaml|diff_sw3.657e-04"
+  # "configs/ablation/train_ddpm_shape_w1.829e-03.yaml|diff_sw1.829e-03"
 )
 
 IDX=${SLURM_ARRAY_TASK_ID}
@@ -32,10 +32,15 @@ echo "Running experiment: $NAME (config=$CFG)"
 eval "$(conda shell.bash hook)"
 conda activate jae
 
+export NCCL_P2P_DISABLE=1
+export OMP_NUM_THREADS=1
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:1024
+export MALLOC_ARENA_MAX=1
+
 mkdir -p logs
 
 # Seeds to run
-for SEED in 1 2 3; do
+for SEED in 2 3; do
   EXP_NAME="ablation_${NAME}_s${SEED}"
   accelerate launch \
     --num_processes=1 \

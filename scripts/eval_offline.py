@@ -88,17 +88,25 @@ EVAL_RUNS = [
 # ─────────────────────────────────────────────────────────────────────────────
 
 def resolve_checkpoint(exp_dir: str, step) -> str:
-    """Returns the checkpoint directory path for a given step or 'latest'."""
+    """Returns the checkpoint directory path for a given step, 'latest', or an exact string like 'best'."""
     ckpts_dir = os.path.join(exp_dir, "checkpoints")
     if not os.path.isdir(ckpts_dir):
         raise FileNotFoundError(f"checkpoints/ not found in {exp_dir}")
 
-    available = sorted(
-        [d for d in os.listdir(ckpts_dir) if d.startswith("checkpoint-")],
-        key=lambda x: int(x.split("-")[1])
-    )
+    # Fast path for non-numeric exact string steps (e.g., 'best')
+    exact_path = os.path.join(ckpts_dir, f"checkpoint-{step}")
+    if isinstance(step, str) and not step.isdigit() and step != "latest":
+        if os.path.isdir(exact_path):
+            return exact_path
+        else:
+            raise FileNotFoundError(f"Requested exact checkpoint {exact_path} not found.")
+
+    # For 'latest' or numeric step matching, only parse numeric checkpoints
+    available = [d for d in os.listdir(ckpts_dir) if d.startswith("checkpoint-") and d.split("-")[1].isdigit()]
+    available = sorted(available, key=lambda x: int(x.split("-")[1]))
+    
     if not available:
-        raise FileNotFoundError(f"No checkpoints found in {ckpts_dir}")
+        raise FileNotFoundError(f"No numeric checkpoints found in {ckpts_dir}")
 
     if step == "latest":
         chosen = available[-1]
@@ -163,14 +171,20 @@ def expand_eval_runs(eval_runs: list, args=None) -> list:
                 print(f"  [SKIP] {base_label} @ step {ckpt_step} — {e}")
                 continue
 
-            actual_step = int(os.path.basename(ckpt_path).split("-")[1])
+            ckpt_basename_part = os.path.basename(ckpt_path).split("-")[1]
+            if ckpt_basename_part.isdigit():
+                actual_step = int(ckpt_basename_part)
+                step_label  = f"{actual_step//1000}k"
+            else:
+                actual_step = ckpt_basename_part   # e.g. "best"
+                step_label  = ckpt_basename_part
 
             for inf_steps in inf_steps_list:
-                label = f"{base_label} @ {actual_step//1000}k, {inf_steps} steps"
+                label = f"{base_label} @ {step_label}, {inf_steps} steps"
                 short = (
                     f"{'Edge' if is_edge else 'Full'}-"
                     f"{'FM' if use_fm else 'DDPM'}-"
-                    f"{actual_step//1000}k-i{inf_steps}"
+                    f"{step_label}-i{inf_steps}"
                 )
                 specs.append({
                     "label":          label,

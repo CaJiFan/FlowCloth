@@ -58,11 +58,10 @@ def setup_accelerator(project_dir: str,
     
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
     
-    log_with = None if logs_report_to in [None, "None", "none", ""] else logs_report_to
     accelerator = Accelerator(
         gradient_accumulation_steps=gradient_accumulation_steps,
         mixed_precision=mixed_precision,
-        log_with=log_with,
+        log_with=logs_report_to,
         project_config=accelerator_project_config,
         kwargs_handlers=[ddp_kwargs]
     )
@@ -152,17 +151,9 @@ def main():
     seed_everything(int(config.seed))
     
     diff_cfg = OmegaConf.to_container(config.diffusion_cfg)
-    if getattr(args, "shape_loss_weight", None) is not None:
-        diff_cfg["shape_loss_weight"] = args.shape_loss_weight
-    if getattr(args, "laplacian_loss_weight", None) is not None:
-        diff_cfg["laplacian_loss_weight"] = args.laplacian_loss_weight
-    if getattr(args, "corner_loss_weight", None) is not None:
-        diff_cfg["corner_loss_weight"] = args.corner_loss_weight
-    if getattr(args, "contour_loss_weight", None) is not None:
-        diff_cfg["contour_loss_weight"] = args.contour_loss_weight
-    if getattr(args, "edge_loss_weight", None) is not None:
-        diff_cfg["edge_loss_weight"] = args.edge_loss_weight
-
+    for k in ["shape_loss_weight", "laplacian_loss_weight", "corner_loss_weight", "contour_loss_weight", "edge_loss_weight"]:
+        if getattr(config, k, None) is not None:
+            diff_cfg[k] = getattr(config, k)
     diffusion_scheduler = build_scheduler(diff_cfg)
     
     if config.pretrained_model_name_or_path:
@@ -256,14 +247,16 @@ def main():
         sampler=data_sampler,
         batch_size=config.per_gpu_batch_size,
         num_workers=config.num_workers,
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=(config.num_workers > 0)
     )
     valid_dataloader = torch.utils.data.DataLoader(
         valid_dataset,
         batch_size=config.per_gpu_batch_size,
         num_workers=config.num_workers,
         shuffle=True,
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=(config.num_workers > 0)
     )
 
     print('max train steps before accelerator preparation:', config.max_train_steps)
@@ -286,10 +279,12 @@ def main():
     
     # length of dataloader may change after prepared with accelerator
     num_update_step_per_epoch = math.ceil(len(train_dataloader) / config.gradient_accumulation_steps)
-    if config.max_train_steps is None or config.max_train_steps <= 0:
+    if getattr(config, "num_train_epochs", None) is not None and config.num_train_epochs < 900000:
         config.max_train_steps = config.num_train_epochs * num_update_step_per_epoch
-    else:
+    elif getattr(config, "max_train_steps", None) is not None and config.max_train_steps > 0:
         config.num_train_epochs = math.ceil(config.max_train_steps / num_update_step_per_epoch)
+    else:
+        config.max_train_steps = config.num_train_epochs * num_update_step_per_epoch
 
     config.do_classifier_free_guidance = False
     
@@ -442,19 +437,19 @@ def main():
                     "loss": f"{train_loss:.4f}",
                     "lr": f"{current_lr:.2e}"
                 }
+                if hasattr(diffusion_scheduler, "last_loss_laplacian") and diffusion_scheduler.last_loss_laplacian > 0:
+                    pbar_updates["lapl"] = f"{diffusion_scheduler.last_loss_laplacian:.4f}"
                 if hasattr(diffusion_scheduler, "last_loss_corner") and diffusion_scheduler.last_loss_corner > 0:
                     pbar_updates["corn"] = f"{diffusion_scheduler.last_loss_corner:.4f}"
                 if hasattr(diffusion_scheduler, "last_loss_edge") and diffusion_scheduler.last_loss_edge > 0:
                     pbar_updates["edge"] = f"{diffusion_scheduler.last_loss_edge:.4f}"
-                if hasattr(diffusion_scheduler, "last_loss_laplacian") and diffusion_scheduler.last_loss_laplacian > 0:
-                    pbar_updates["lapl"] = f"{diffusion_scheduler.last_loss_laplacian:.4f}"
                 progress_bar.set_postfix(pbar_updates)
 
                 accelerator.log({"train/loss": train_loss}, step=global_step)
                 accelerator.log({"train/learning_rate": lr_scheduler.get_last_lr()[0]}, step=global_step)
                 # Log per-component losses from the diffusion scheduler if available
                 comp_logs = {}
-                for attr in ["last_loss_noise", "last_loss_vel", "last_loss_shape", "last_loss_corner", "last_loss_contour", "last_loss_edge", "last_loss_laplacian"]:
+                for attr in ["last_loss_noise", "last_loss_vel", "last_loss_shape", "last_loss_laplacian", "last_loss_corner", "last_loss_contour", "last_loss_edge"]:
                     if hasattr(diffusion_scheduler, attr) and getattr(diffusion_scheduler, attr) is not None:
                         tag = attr.replace("last_", "")
                         comp_logs[f"train/{tag}"] = getattr(diffusion_scheduler, attr)
@@ -503,24 +498,22 @@ def main():
                     
                     if "StateEst" in config.model_cfg.type:
                         use_flow_matching = "FlowMatching" in config.diffusion_cfg.type
-                        sched = accelerator.unwrap_model(diffusion_scheduler) if isinstance(diffusion_scheduler, torch.nn.Module) else diffusion_scheduler
                         if use_flow_matching:
                             pipeline = ClothStateEstFMPipeline(
                                 model=accelerator.unwrap_model(model),
-                                scheduler=sched
+                                scheduler=accelerator.unwrap_model(diffusion_scheduler)
                             )
                         else:
                             pipeline = ClothStateEstPipeline(
                                 model=accelerator.unwrap_model(model),
-                                scheduler=sched
+                                scheduler=accelerator.unwrap_model(diffusion_scheduler)
                             )
                         is_dynamics = False
                     else:
                         from uniclothdiff.pipelines import ClothDynamicsPipeline
-                        sched = accelerator.unwrap_model(diffusion_scheduler) if isinstance(diffusion_scheduler, torch.nn.Module) else diffusion_scheduler
                         pipeline = ClothDynamicsPipeline(
                             model=accelerator.unwrap_model(model),
-                            scheduler=sched
+                            scheduler=accelerator.unwrap_model(diffusion_scheduler)
                         )
                         is_dynamics = True
 
@@ -543,12 +536,14 @@ def main():
                         sample_chamfer_error = 0.0
                         sample_fscore = 0.0
                         num_sample_batches = 0
+                        num_evaluated_samples = 0
+                        max_val_samples = getattr(config, "max_val_samples", 1000)
 
                         for val_step, val_batch in enumerate(valid_dataloader):
-                            if val_step >= 50: # evaluate up to 50 batches for early stopping signal stability
+                            if num_evaluated_samples >= max_val_samples:
                                 break
-                            # val_batch = sanity_batch.copy()
                             batch_size = val_batch['pcd'].shape[0] if not is_dynamics else val_batch['q_prev'].shape[0]
+                            num_evaluated_samples += batch_size
 
                             if is_dynamics:
                                 # --- ORIGINAL DYNAMICS LOGIC ---
@@ -674,7 +669,11 @@ def main():
                             stop_training = True
                             break
                 
-                if early_stop_triggered or global_step >= config.max_train_steps:
+                if early_stop_triggered:
+                    break
+
+                if global_step >= config.max_train_steps:
+                    logger.info(f"Max train steps reached ({global_step} >= {config.max_train_steps}), ending training...")
                     stop_training = True
                     break
                 

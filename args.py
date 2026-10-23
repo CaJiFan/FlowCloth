@@ -271,35 +271,16 @@ def parse_args():
         help="Number of consecutive evaluations without improvement before early stopping (default: 15)."
     )
     parser.add_argument(
-        "--shape_loss_weight",
-        type=float,
-        default=None,
-        help="Override shape/reconstruction loss weight in diffusion_cfg (default: None, use config)."
+        "--max_val_samples",
+        type=int,
+        default=1000,
+        help="Maximum number of validation samples to evaluate during sampling (default: 1000)."
     )
-    parser.add_argument(
-        "--laplacian_loss_weight",
-        type=float,
-        default=None,
-        help="Override Laplacian smoothness loss weight in diffusion_cfg (default: None, use config)."
-    )
-    parser.add_argument(
-        "--corner_loss_weight",
-        type=float,
-        default=None,
-        help="Override corner loss weight in diffusion_cfg (default: None, use config)."
-    )
-    parser.add_argument(
-        "--contour_loss_weight",
-        type=float,
-        default=None,
-        help="Override contour loss weight in diffusion_cfg (default: None, use config)."
-    )
-    parser.add_argument(
-        "--edge_loss_weight",
-        type=float,
-        default=None,
-        help="Override edge rest-length loss weight in diffusion_cfg (default: None, use config)."
-    )
+    parser.add_argument("--shape_loss_weight", type=float, default=None, help="Override shape loss weight")
+    parser.add_argument("--laplacian_loss_weight", type=float, default=None, help="Override laplacian loss weight")
+    parser.add_argument("--corner_loss_weight", type=float, default=None, help="Override corner loss weight")
+    parser.add_argument("--contour_loss_weight", type=float, default=None, help="Override contour loss weight")
+    parser.add_argument("--edge_loss_weight", type=float, default=None, help="Override edge loss weight")
     args = parser.parse_args()
     
     if args.resume_from_checkpoint == "None":

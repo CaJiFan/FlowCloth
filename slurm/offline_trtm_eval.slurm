@@ -30,4 +30,4 @@ export MALLOC_ARENA_MAX=1
 
 echo "🚀 Launching Accelerate Distributed Training on 1 GPUs..."
 
-python3 scripts/eval_offline_trtm.py --no_wandb > eval_seeds2.log 2>&1 
+python3 scripts/eval_offline_trtm.py --no_wandb > eval_lapl.log 2>&1 
