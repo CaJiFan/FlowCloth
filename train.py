@@ -1,4 +1,5 @@
 import os
+import json
 import math
 import shutil
 import logging
@@ -250,11 +251,17 @@ def main():
         pin_memory=True,
         persistent_workers=(config.num_workers > 0)
     )
+    # Fixed random validation subset: every evaluation scores the same samples,
+    # so early stopping compares checkpoints rather than sample draws
+    max_val_samples = getattr(config, "max_val_samples", 1000)
+    if max_val_samples < len(valid_dataset):
+        val_indices = np.random.default_rng(0).choice(len(valid_dataset), max_val_samples, replace=False)
+        valid_dataset = torch.utils.data.Subset(valid_dataset, np.sort(val_indices).tolist())
     valid_dataloader = torch.utils.data.DataLoader(
         valid_dataset,
         batch_size=config.per_gpu_batch_size,
         num_workers=config.num_workers,
-        shuffle=True,
+        shuffle=False,
         pin_memory=True,
         persistent_workers=(config.num_workers > 0)
     )
@@ -314,6 +321,7 @@ def main():
     
     global_step = 0
     first_epoch = 0
+    resumed_es_state = None
     
     # Potentially load in the weights and states from a previous save
     if config.resume_from_checkpoint:
@@ -343,6 +351,22 @@ def main():
                 accelerator.load_state(os.path.join(checkpoints_dir, path))
                 global_step = int(path.split("-")[1])
 
+                # Restore early-stopping state so a resume does not overwrite
+                # checkpoint-best with a worse model or reset the patience
+                es_path = os.path.join(checkpoints_dir, path, "early_stopping.json")
+                if os.path.exists(es_path):
+                    with open(es_path) as f:
+                        resumed_es_state = json.load(f)
+                    # checkpoint-best may be newer than the periodic checkpoint
+                    best_path = os.path.join(checkpoints_dir, "checkpoint-best", "best_score.json")
+                    if os.path.exists(best_path):
+                        with open(best_path) as f:
+                            best_score = json.load(f)["best_val_score"]
+                        if best_score < resumed_es_state["best_val_score"]:
+                            resumed_es_state["best_val_score"] = best_score
+                            resumed_es_state["patience_counter"] = 0
+                    accelerator.print(f"Restored early-stopping state: {resumed_es_state}")
+
             resume_global_step = global_step * config.gradient_accumulation_steps
             first_epoch = global_step // num_update_step_per_epoch
             resume_step = resume_global_step % (num_update_step_per_epoch * config.gradient_accumulation_steps)
@@ -362,8 +386,8 @@ def main():
     stop_training = False
     
     # Early stopping setup
-    best_val_score = float('inf')
-    patience_counter = 0
+    best_val_score = resumed_es_state["best_val_score"] if resumed_es_state else float('inf')
+    patience_counter = resumed_es_state["patience_counter"] if resumed_es_state else 0
     patience_limit = getattr(config, "patience_limit", 15)
     use_hybrid = getattr(config, "use_hybrid_patience_loss", False)
     early_stop_triggered = False
@@ -488,6 +512,10 @@ def main():
                     save_path = os.path.join(
                         checkpoints_dir, f"checkpoint-{global_step}")
                     accelerator.save_state(save_path)
+                    with open(os.path.join(save_path, "early_stopping.json"), "w") as f:
+                        json.dump({"best_val_score": best_val_score,
+                                   "patience_counter": patience_counter,
+                                   "global_step": global_step}, f)
                     logger.info(f"Saved state to {save_path}")
                 
                 # Run sampling
@@ -538,6 +566,8 @@ def main():
                         num_sample_batches = 0
                         num_evaluated_samples = 0
                         max_val_samples = getattr(config, "max_val_samples", 1000)
+                        # Same initial noise at every evaluation
+                        val_generator = torch.Generator(device=accelerator.device).manual_seed(0)
 
                         for val_step, val_batch in enumerate(valid_dataloader):
                             if num_evaluated_samples >= max_val_samples:
@@ -573,13 +603,15 @@ def main():
                                 num_nodes = q_temp.shape[1] 
                                 noise_shape = (batch_size, num_nodes, 3)
 
-                                # FM needs only 50 steps; DDPM uses 100 as a fast approximation
+                                # Default: FM 50 steps, DDPM 100; --val_inference_steps matches deployment
                                 _use_fm = "FlowMatching" in config.diffusion_cfg.type
+                                _val_steps = getattr(config, "val_inference_steps", None) or (50 if _use_fm else 100)
                                 pred_output = pipeline(
                                     encoder_hidden_states=pcd,
                                     q_temp=q_temp,
                                     shape=noise_shape,
-                                    num_inference_steps=50 if _use_fm else 100,
+                                    num_inference_steps=_val_steps,
+                                    generator=val_generator,
                                     do_classifier_free_guidance=config.do_classifier_free_guidance,
                                     call_v2=True,
                                 )
@@ -653,10 +685,19 @@ def main():
                         patience_counter = 0
                         logger.info(f"New best {metric_label}: {best_val_score:.6f}. Saving best model...")
                         if accelerator.is_main_process:
+                            # Weights only (~0.9 GB): nothing resumes from checkpoint-best, so the
+                            # optimizer/scheduler state (~1.7 GB) is not needed. Write to a temp dir and
+                            # swap, so a failed save (e.g. disk quota) never destroys the previous best.
                             best_save_path = os.path.join(checkpoints_dir, "checkpoint-best")
+                            tmp_save_path = best_save_path + ".tmp"
+                            if os.path.exists(tmp_save_path):
+                                shutil.rmtree(tmp_save_path)
+                            accelerator.unwrap_model(model).save_pretrained(os.path.join(tmp_save_path, "model"))
+                            with open(os.path.join(tmp_save_path, "best_score.json"), "w") as f:
+                                json.dump({"best_val_score": best_val_score, "global_step": global_step}, f)
                             if os.path.exists(best_save_path):
                                 shutil.rmtree(best_save_path)
-                            accelerator.save_state(best_save_path)
+                            os.rename(tmp_save_path, best_save_path)
                     else:
                         patience_counter += 1
                         logger.info(f"{metric_label.capitalize()} did not improve ({current_score:.6f} > {best_val_score:.6f}). Patience: {patience_counter}/{patience_limit}")

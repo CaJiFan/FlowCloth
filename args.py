@@ -276,6 +276,12 @@ def parse_args():
         default=1000,
         help="Maximum number of validation samples to evaluate during sampling (default: 1000)."
     )
+    parser.add_argument(
+        "--val_inference_steps",
+        type=int,
+        default=None,
+        help="Sampling steps for validation / early stopping (default: None -> 50 for FM, 100 for DDPM)."
+    )
     parser.add_argument("--shape_loss_weight", type=float, default=None, help="Override shape loss weight")
     parser.add_argument("--laplacian_loss_weight", type=float, default=None, help="Override laplacian loss weight")
     parser.add_argument("--corner_loss_weight", type=float, default=None, help="Override corner loss weight")

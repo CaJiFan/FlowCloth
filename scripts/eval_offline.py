@@ -394,6 +394,12 @@ def evaluate(spec: dict, pipeline, val_loader, args, device: torch.device) -> di
         all_latency_ms.append(elapsed_ms / B)   # per sample
         all_gpu_mem_mb.append(gpu_mem_mb)
 
+        # Metrics in raw dataset units, independent of each model's normalisation
+        if getattr(args, "raw_units", False) and "norm_scale" in batch:
+            s    = batch["norm_scale"].numpy()[:, None, None]
+            pred = pred * s
+            q_gt = q_gt * s
+
         all_mse.append(mse(pred, q_gt))
         all_chamfer.append(chamfer_l1(pred, q_gt))
         all_f1cm.append(f_score_at(pred, q_gt, threshold=0.01))

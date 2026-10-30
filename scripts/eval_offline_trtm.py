@@ -90,36 +90,69 @@ BASE_EVAL_RUNS = [
     },
 ]
 
+# --- Observation normalisation / fold synthesis / new loss ablation (--suite obsnorm) ---
+# weight_tex holds the variant tag: N = obs. normalisation, F = fold synthesis,
+# L(w) = GT-relative t-weighted Laplacian with lambda_x1 = w
+_OBSNORM_VARIANTS = [
+    ("obsnorm",                 "N"),
+    ("obsnorm_folds",           "N+F"),
+    ("obsnorm_folds_nl_x1w10",  "N+F+L(10)"),
+    ("obsnorm_folds_nl_x1w1",   "N+F+L(1)"),
+]
+BASE_EVAL_RUNS_OBSNORM = [
+    {
+        "base_dir":   f"experiments/ablation_fm{'_edge' if edge else ''}_{name}",
+        "seeds":      [1],
+        "steps":      ["best"],
+        "inf_steps":  [1, 4, 10],
+        "label":      r"\textsc{Contour-FlowCloth}" if edge else r"\textsc{FlowCloth}",
+        "weight_tex": tag,
+    }
+    for edge in (False, True) for name, tag in _OBSNORM_VARIANTS
+]
+SUITES = {
+    "lapl":    (BASE_EVAL_RUNS,         r"$\lambda_{\mathrm{lapl}}$",
+                r"Ablation on discrete Laplacian weight $\lambda_{\mathrm{lapl}}$"),
+    "obsnorm": (BASE_EVAL_RUNS_OBSNORM, r"Variant",
+                r"Ablation on observation normalisation (N), fold synthesis (F) and GT-relative Laplacian loss (L)"),
+}
 
-EVAL_RUNS = []
-for run in BASE_EVAL_RUNS:
-    if "weight_tex" in run:
-        weight_tex = run["weight_tex"]
-    elif "_lapl_w" in run["base_dir"]:
-        raw_w = run["base_dir"].split("_lapl_w")[-1]
-        weight_tex = f"{raw_w}"
-    elif "_sw" in run["base_dir"]:
-        raw_w = run["base_dir"].split("_sw")[-1]
-        if "e" in raw_w:
-            base, exp = raw_w.split("e")
-            weight_tex = f"${float(base):.1f} \\times 10^{{{int(exp)}}}$"
+
+def flatten_eval_runs(base_runs: list) -> list:
+    eval_runs = []
+    for run in base_runs:
+        if "weight_tex" in run:
+            weight_tex = run["weight_tex"]
+        elif "_lapl_w" in run["base_dir"]:
+            raw_w = run["base_dir"].split("_lapl_w")[-1]
+            weight_tex = f"{raw_w}"
+        elif "_sw" in run["base_dir"]:
+            raw_w = run["base_dir"].split("_sw")[-1]
+            if "e" in raw_w:
+                base, exp = raw_w.split("e")
+                weight_tex = f"${float(base):.1f} \\times 10^{{{int(exp)}}}$"
+            else:
+                weight_tex = f"${float(raw_w)}$"
         else:
-            weight_tex = f"${float(raw_w)}$"
-    else:
-        weight_tex = "-"
+            weight_tex = "-"
 
-    for seed in run["seeds"]:
-        exp_dir = f"{run['base_dir']}_s{seed}" 
-        new_run = {
-            "exp_dir": exp_dir,
-            "steps": run["steps"],
-            "inf_steps": run["inf_steps"],
-            "label": f"{run['label']} (s{seed})", 
-            "group_label": run["label"], 
-            "weight_tex": weight_tex,
-            "seed": seed
-        }
-        EVAL_RUNS.append(new_run)
+        for seed in run["seeds"]:
+            exp_dir = f"{run['base_dir']}_s{seed}" 
+            new_run = {
+                "exp_dir": exp_dir,
+                "steps": run["steps"],
+                "inf_steps": run["inf_steps"],
+                "label": f"{run['label']} (s{seed})", 
+                "group_label": run["label"], 
+                "weight_tex": weight_tex,
+                "seed": seed
+            }
+            eval_runs.append(new_run)
+    return eval_runs
+
+
+EVAL_RUNS = flatten_eval_runs(BASE_EVAL_RUNS)
+ACTIVE_SUITE = "lapl"
 # ─────────────────────────────────────────────────────────────────────────────
 # LaTeX quality table (Mean ± Std)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +164,7 @@ LATEX_TEMPLATE = r"""
 \begin{{table*}}[t]
   \centering
   \small
-  \caption{{Ablation on discrete Laplacian weight $\lambda_{{\mathrm{{lapl}}}}$ on TRTM validation set. Results are Mean {caption_seeds}.
+  \caption{{{caption_title} on TRTM validation set. Results are Mean {caption_seeds}.
             Best results per column in \textbf{{bold}}. Evaluated on {n_samples} samples.}}
   \label{{tab:state_est_trtm}}
   \setlength{{\tabcolsep}}{{4pt}}
@@ -140,7 +173,7 @@ LATEX_TEMPLATE = r"""
     \toprule
     \textbf{{Method}} &
     \textbf{{Inf. steps}} &
-    \textbf{{$\lambda_{{\mathrm{{lapl}}}}$}} &
+    \textbf{{{param_header}}} &
     \textbf{{MSE\,$\downarrow$}} &
     \textbf{{CD-L1\,$\downarrow$}} &
     \textbf{{F@2cm\,$\uparrow$}} &
@@ -213,7 +246,9 @@ def build_latex_aggregated(agg_results: list) -> str:
     n_samples = agg_results[0]["num_val_samples"]
     seeds_seen = set(r.get("seed", 1) for r in agg_results)
     caption_seeds = f"across {len(seeds_seen)} seeds" if len(seeds_seen) > 1 else "(single seed)"
-    return LATEX_TEMPLATE.format(rows=rows, n_samples=n_samples, caption_seeds=caption_seeds)
+    _, param_header, caption_title = SUITES[ACTIVE_SUITE]
+    return LATEX_TEMPLATE.format(rows=rows, n_samples=n_samples, caption_seeds=caption_seeds,
+                                 param_header=param_header, caption_title=caption_title)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -315,6 +350,14 @@ def parse_args():
                    help="Subset of short labels to evaluate")
     p.add_argument("--out",            default="eval_results_trtm_table.tex")
     p.add_argument("--out_efficiency", default="eval_efficiency_trtm_table.tex")
+    p.add_argument("--suite", choices=list(SUITES), default="lapl",
+                   help="Which set of runs to evaluate (BASE_EVAL_RUNS or BASE_EVAL_RUNS_OBSNORM)")
+    p.add_argument("--eval_norm_mode", choices=["config", "gt", "obs"], default="config",
+                   help="Override dataset norm_mode at eval. 'obs' reproduces deployment preprocessing for any model")
+    p.add_argument("--raw_units", action="store_true",
+                   help="Undo normalisation before computing metrics, so models with different norm_mode are comparable")
+    p.add_argument("--val_fold_prob", type=float, default=0.0,
+                   help="Replace this fraction of val samples with deterministic procedural folds (fold-robustness eval)")
     return p.parse_args()
 
 
@@ -323,8 +366,11 @@ def parse_args():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    global EVAL_RUNS, ACTIVE_SUITE
     args   = parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    ACTIVE_SUITE = args.suite
+    EVAL_RUNS = flatten_eval_runs(SUITES[args.suite][0])
 
     print("Resolving TRTM evaluation runs...")
     specs = expand_eval_runs(EVAL_RUNS, args)
@@ -359,6 +405,10 @@ def main():
             val_cfg = OmegaConf.to_container(config.dataset_cfg, resolve=True)
             val_cfg["mode"] = "val"
             val_cfg["do_point_cloud_augmentation"] = False
+            if args.eval_norm_mode != "config":
+                val_cfg["norm_mode"] = args.eval_norm_mode
+            val_cfg["eval_fold_prob"] = args.val_fold_prob
+            val_cfg["return_norm_params"] = args.raw_units
             from uniclothdiff.registry import build_dataset
             val_dataset = build_dataset(val_cfg)
             loader_cache[group_label] = torch.utils.data.DataLoader(

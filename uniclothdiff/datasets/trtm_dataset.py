@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import Dataset
 
 from uniclothdiff.registry import DATASETS
+from uniclothdiff.datasets.fold_synthesis import synthesize_folded_sample
 
 @DATASETS.register_module()
 class TRTMDiffusionDataset(Dataset):
@@ -20,6 +21,11 @@ class TRTMDiffusionDataset(Dataset):
         do_point_cloud_augmentation=True,
         points_jitter_sigma=0.002,      # 2 mm sensor noise (same as VR-Folding)
         points_drop_ratio=0.0,
+        norm_mode='gt',                 # 'gt': centre/scale from GT mesh (legacy) | 'obs': from observed pcd (= deployment)
+        scale_jitter=0.0,               # 'obs' only, train only: scale *= U(1-j, 1+j)
+        fold_prob=0.0,                  # train only: probability of replacing a sample with a procedural fold
+        eval_fold_prob=0.0,             # val only: same, deterministic per index (fold-robustness eval)
+        return_norm_params=False,       # add 'norm_com' / 'norm_scale' to each sample (raw-unit metrics)
     ):
         self.mode = mode
         if not os.path.exists(data_dir):
@@ -39,6 +45,12 @@ class TRTMDiffusionDataset(Dataset):
         self.do_point_cloud_augmentation = do_point_cloud_augmentation
         self.points_jitter_sigma = points_jitter_sigma
         self.points_drop_ratio = points_drop_ratio
+        assert norm_mode in ('gt', 'obs'), f'unknown norm_mode {norm_mode}'
+        self.norm_mode = norm_mode
+        self.scale_jitter = scale_jitter
+        self.fold_prob = fold_prob
+        self.eval_fold_prob = eval_fold_prob
+        self.return_norm_params = return_norm_params
 
         # ── contour indices for 21×21 grid ────────────────────────────────
         self.contour_idx = self._get_contour_indices_square(21)
@@ -80,6 +92,7 @@ class TRTMDiffusionDataset(Dataset):
         with open(template_path, 'rb') as f:
             info = pickle.load(f)
         pts = info['mesh_pos'].astype(np.float32)        # [441, 3], already centred
+        self.template_full = pts.copy()                  # fold synthesis always works on the full grid
 
         raw_edges = info['edge_idx'].astype(np.int64) if 'edge_idx' in info else np.zeros((0, 2), dtype=np.int64)
         raw_corners = info['corner_idx'].astype(np.int64) if 'corner_idx' in info else np.array([0, 20, 440, 420], dtype=np.int64)
@@ -165,6 +178,9 @@ class TRTMDiffusionDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
+        if self.mode != 'train':
+            # deterministic point subsampling per sample, so validation scores are comparable across evaluations
+            np.random.seed(idx)
         if self.has_gt:
             return self._getitem_simu(idx)
         else:
@@ -172,25 +188,37 @@ class TRTMDiffusionDataset(Dataset):
 
     def _getitem_simu(self, idx):
         try:
-            mesh = np.loadtxt(self.data_files[idx]).astype(np.float32)  # [441, 3]
-
-            # ── PCD generation based on pcd_source ────────────────────────
-            if self.pcd_source == 'depth':
-                depth_path = self.data_files[idx].replace('.simu_mesh.txt', '.simu_depth.png')
-                pcd = self._depth_to_pcd(depth_path, mesh)
-            elif self.pcd_source == 'visible_surface':
-                pcd = self._visible_surface_to_pcd(mesh)
+            fold_rng = self._fold_rng(idx)
+            if fold_rng is not None:
+                # ── procedural fold replaces the TRTM sample ─────────────
+                mesh, pcd = synthesize_folded_sample(self.template_full, self.num_sample_points, fold_rng)
             else:
-                pcd = self._mesh_to_pcd(mesh)
+                mesh = np.loadtxt(self.data_files[idx]).astype(np.float32)  # [441, 3]
 
-            # ── normalise (same convention as VR-Folding) ─────────────────
-            com   = mesh.mean(axis=0)
-            mesh -= com
-            pcd  -= com
+                # ── PCD generation based on pcd_source ────────────────────
+                if self.pcd_source == 'depth':
+                    depth_path = self.data_files[idx].replace('.simu_mesh.txt', '.simu_depth.png')
+                    pcd = self._depth_to_pcd(depth_path, mesh)
+                elif self.pcd_source == 'visible_surface':
+                    pcd = self._visible_surface_to_pcd(mesh)
+                else:
+                    pcd = self._mesh_to_pcd(mesh)
+
+            # ── normalise ─────────────────────────────────────────────────
+            # 'gt'  : centre/scale from the GT mesh (legacy, uses information
+            #         unavailable at deployment; output always has radius 1)
+            # 'obs' : centre/scale from the observed pcd, identical to
+            #         deployment (OrbbecDepthProcessor.normalise_pcd)
+            ref   = pcd if self.norm_mode == 'obs' else mesh
+            com   = ref.mean(axis=0)
+            scale = float(np.max(np.linalg.norm(ref - com, axis=1)))
+            if self.norm_mode == 'obs' and self.scale_jitter > 0 and self.mode == 'train':
+                scale *= np.random.uniform(1 - self.scale_jitter, 1 + self.scale_jitter)
+            mesh = mesh - com
+            pcd  = pcd - com
 
             q_temp = self.q_template.numpy().copy()
-            # template is already zero-centred; rescale to match this frame's extent
-            scale = float(np.max(np.linalg.norm(mesh, axis=1)))
+            # template is already zero-centred; always unit radius
             if scale > 1e-6:
                 mesh   /= scale
                 pcd    /= scale
@@ -221,7 +249,7 @@ class TRTMDiffusionDataset(Dataset):
             if self.train_mode == 'edge_only':
                 mesh   = mesh[self.contour_idx]
 
-            return {
+            sample = {
                 'q_gt':        torch.tensor(mesh,            dtype=torch.float32),
                 'pcd':         torch.tensor(pcd,             dtype=torch.float32),
                 'q_temp':      torch.tensor(q_temp,          dtype=torch.float32),
@@ -229,11 +257,15 @@ class TRTMDiffusionDataset(Dataset):
                 'corner_idx':  torch.tensor(self.corner_idx, dtype=torch.long),
                 'contour_idx': torch.tensor(self.contour_idx, dtype=torch.long),
             }
+            if self.return_norm_params:
+                sample['norm_com']   = torch.tensor(com,   dtype=torch.float32)
+                sample['norm_scale'] = torch.tensor(scale, dtype=torch.float32)
+            return sample
 
         except Exception as e:
             print(f'[TRTM] Error at idx {idx} ({self.data_files[idx]}): {e}')
             N = len(self.contour_idx) if self.train_mode == 'edge_only' else 441
-            return {
+            sample = {
                 'q_gt':        torch.zeros((N, 3),                      dtype=torch.float32),
                 'pcd':         torch.zeros((self.num_sample_points, 3), dtype=torch.float32),
                 'q_temp':      self.q_template,
@@ -241,6 +273,22 @@ class TRTMDiffusionDataset(Dataset):
                 'corner_idx':  torch.tensor(self.corner_idx,            dtype=torch.long),
                 'contour_idx': torch.tensor(self.contour_idx,           dtype=torch.long),
             }
+            if self.return_norm_params:
+                sample['norm_com']   = torch.zeros(3, dtype=torch.float32)
+                sample['norm_scale'] = torch.tensor(1.0, dtype=torch.float32)
+            return sample
+
+    def _fold_rng(self, idx):
+        """Generator for a procedural fold sample, or None to use the TRTM sample."""
+        if self.mode == 'train' and self.fold_prob > 0:
+            # torch's RNG is re-seeded per DataLoader worker, numpy's global RNG is not
+            if torch.rand(1).item() < self.fold_prob:
+                return np.random.default_rng(torch.randint(0, 2**31 - 1, (1,)).item())
+        elif self.mode != 'train' and self.eval_fold_prob > 0:
+            rng = np.random.default_rng(idx)
+            if rng.random() < self.eval_fold_prob:
+                return rng
+        return None
 
     def _getitem_real(self, idx):
         """

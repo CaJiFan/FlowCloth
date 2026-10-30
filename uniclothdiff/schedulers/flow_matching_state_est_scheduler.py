@@ -13,6 +13,8 @@ Timestep is scaled to [0, num_train_timesteps] so AdaLayerNorm sees the same
 integer range it would see during DDPM training.
 """
 
+from typing import Optional
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -24,6 +26,14 @@ class FlowMatching_StateEst:
     """
     Conditional Flow Matching scheduler with multi-objective physics and boundary-aware loss:
       L_total = L_vel + lambda_shape * L_recon + lambda_laplacian * L_laplacian + lambda_corner * L_corner + lambda_contour * L_contour + lambda_edge * L_edge
+
+    laplacian_mode:
+      'absolute'    : ||Lap(x1_hat)||^2             — pulls every prediction towards an uncreased mesh
+      'gt_relative' : ||Lap(x1_hat) - Lap(x1)||^2   — matches local curvature, real creases cost nothing
+    struct_time_weighting:
+      multiply the structural terms (Laplacian, edge) by t per sample. At t ~ 0, x1_hat is
+      the posterior mean, which for ambiguous folds is not a physical cloth, so structural
+      priors are applied mostly at late t where x1_hat is close to a single mode.
     """
 
     def __init__(
@@ -34,13 +44,18 @@ class FlowMatching_StateEst:
         corner_loss_weight: float = 0.0,
         contour_loss_weight: float = 0.0,
         edge_loss_weight: float = 0.0,
+        laplacian_mode: str = "absolute",
+        struct_time_weighting: bool = False,
     ):
+        assert laplacian_mode in ("absolute", "gt_relative"), f"unknown laplacian_mode {laplacian_mode}"
         self.num_train_timesteps = num_train_timesteps
         self.shape_loss_weight = shape_loss_weight
         self.laplacian_loss_weight = laplacian_loss_weight
         self.corner_loss_weight = corner_loss_weight
         self.contour_loss_weight = contour_loss_weight
         self.edge_loss_weight = edge_loss_weight
+        self.laplacian_mode = laplacian_mode
+        self.struct_time_weighting = struct_time_weighting
 
         # Logging attributes
         self.last_loss_noise = 0.0
@@ -197,6 +212,9 @@ class FlowMatching_StateEst:
         else:
             loss_contour = torch.tensor(0.0, device=device)
 
+        # Per-sample weight for structural terms (edge, Laplacian)
+        struct_w = t_continuous.float() if self.struct_time_weighting else torch.ones(batch_size, device=device)
+
         # 5. Inextensibility / Edge-length preservation loss: L_edge
         if self.edge_loss_weight > 0 and edge_idx is not None:
             edges = edge_idx[0].long() if edge_idx.ndim == 3 else edge_idx.long()
@@ -206,52 +224,19 @@ class FlowMatching_StateEst:
             pred_edge_len = torch.sqrt(torch.sum(pred_edge_diff ** 2, dim=-1) + 1e-8)
             target_edge_diff = target_x1_active[:, e_i, :] - target_x1_active[:, e_j, :]
             target_edge_len = torch.sqrt(torch.sum(target_edge_diff ** 2, dim=-1) + 1e-8)
-            loss_edge = F.mse_loss(pred_edge_len, target_edge_len)
+            per_sample = ((pred_edge_len - target_edge_len) ** 2).mean(dim=1)
+            loss_edge = (struct_w * per_sample).mean()
             total_loss = total_loss + self.edge_loss_weight * loss_edge
         else:
             loss_edge = torch.tensor(0.0, device=device)
 
         # 6. Discrete Laplacian Smoothness Loss: L_laplacian (Scale & Aspect-Ratio Invariant)
-        if self.laplacian_loss_weight > 0:
-            num_nodes = pred_x1_active.shape[1]
-            if num_nodes in (441, 400):
-                N = 21 if num_nodes == 441 else 20
-                grid = pred_x1_active.view(batch_size, N, N, 3)
-                center = grid[:, 1:-1, 1:-1, :]
-                north  = grid[:, :-2,  1:-1, :]
-                south  = grid[:, 2:,   1:-1, :]
-                west   = grid[:, 1:-1, :-2,  :]
-                east   = grid[:, 1:-1, 2:,   :]
-                lapl = center - 0.25 * (north + south + west + east)
-                loss_laplacian = torch.mean(lapl ** 2)
-            elif num_nodes in (80, 76):
-                N = 21 if num_nodes == 80 else 20
-                cache_key = f"_cached_neigh_{num_nodes}"
-                if not hasattr(self, cache_key) or getattr(self, cache_key).device != device:
-                    grid = np.arange(N * N).reshape((N, N))
-                    contour_idx = np.unique(np.concatenate((grid[0, :], grid[-1, :], grid[:, 0], grid[:, -1])))
-                    c_map = {orig: new for new, orig in enumerate(contour_idx)}
-                    top = [[c_map[grid[0, c]], c_map[grid[0, c+1]]] for c in range(N - 1)]
-                    bottom = [[c_map[grid[-1, c]], c_map[grid[-1, c+1]]] for c in range(N - 1)]
-                    left = [[c_map[grid[r, 0]], c_map[grid[r+1, 0]]] for r in range(N - 1)]
-                    right = [[c_map[grid[r, -1]], c_map[grid[r+1, -1]]] for r in range(N - 1)]
-                    all_edges = top + bottom + left + right
-                    adj = {i: [] for i in range(num_nodes)}
-                    for u, v in all_edges:
-                        adj[u].append(v)
-                        adj[v].append(u)
-                    neigh = torch.tensor([[adj[i][0], adj[i][1]] for i in range(num_nodes)], dtype=torch.long, device=device)
-                    corners = [c_map[0], c_map[N - 1], c_map[N * N - 1], c_map[N * (N - 1)]]
-                    non_corners = torch.tensor([i for i in range(num_nodes) if i not in corners], dtype=torch.long, device=device)
-                    setattr(self, cache_key, neigh)
-                    setattr(self, f"_cached_non_corners_{num_nodes}", non_corners)
-
-                neigh = getattr(self, cache_key)
-                non_corners = getattr(self, f"_cached_non_corners_{num_nodes}")
-                lapl = pred_x1_active[:, non_corners, :] - 0.5 * (pred_x1_active[:, neigh[non_corners, 0], :] + pred_x1_active[:, neigh[non_corners, 1], :])
-                loss_laplacian = torch.mean(lapl ** 2)
-            else:
-                loss_laplacian = torch.tensor(0.0, device=device)
+        lapl_pred = self._laplacian(pred_x1_active, device) if self.laplacian_loss_weight > 0 else None
+        if lapl_pred is not None:
+            if self.laplacian_mode == "gt_relative":
+                lapl_pred = lapl_pred - self._laplacian(target_x1_active, device)
+            per_sample = (lapl_pred ** 2).flatten(1).mean(dim=1)
+            loss_laplacian = (struct_w * per_sample).mean()
             total_loss = total_loss + self.laplacian_loss_weight * loss_laplacian
         else:
             loss_laplacian = torch.tensor(0.0, device=device)
@@ -266,6 +251,51 @@ class FlowMatching_StateEst:
         self.last_loss_edge = float(loss_edge.detach().cpu().item())
 
         return total_loss
+
+    def _laplacian(self, x: torch.Tensor, device) -> Optional[torch.Tensor]:
+        """
+        Discrete Laplacian of a mesh state x [B, N, 3].
+          441/400 nodes: 2D 5-point stencil on interior grid nodes  → [B, (N_grid-2)^2, 3]
+          80/76 nodes:   1D 3-point stencil on the contour ring,
+                         excluding the four corners                  → [B, M-4, 3]
+        Returns None for unsupported node counts.
+        """
+        batch_size, num_nodes = x.shape[0], x.shape[1]
+        if num_nodes in (441, 400):
+            N = 21 if num_nodes == 441 else 20
+            grid = x.reshape(batch_size, N, N, 3)
+            center = grid[:, 1:-1, 1:-1, :]
+            north  = grid[:, :-2,  1:-1, :]
+            south  = grid[:, 2:,   1:-1, :]
+            west   = grid[:, 1:-1, :-2,  :]
+            east   = grid[:, 1:-1, 2:,   :]
+            return center - 0.25 * (north + south + west + east)
+        if num_nodes in (80, 76):
+            N = 21 if num_nodes == 80 else 20
+            cache_key = f"_cached_neigh_{num_nodes}"
+            if not hasattr(self, cache_key) or getattr(self, cache_key).device != device:
+                grid = np.arange(N * N).reshape((N, N))
+                contour_idx = np.unique(np.concatenate((grid[0, :], grid[-1, :], grid[:, 0], grid[:, -1])))
+                c_map = {orig: new for new, orig in enumerate(contour_idx)}
+                top = [[c_map[grid[0, c]], c_map[grid[0, c+1]]] for c in range(N - 1)]
+                bottom = [[c_map[grid[-1, c]], c_map[grid[-1, c+1]]] for c in range(N - 1)]
+                left = [[c_map[grid[r, 0]], c_map[grid[r+1, 0]]] for r in range(N - 1)]
+                right = [[c_map[grid[r, -1]], c_map[grid[r+1, -1]]] for r in range(N - 1)]
+                all_edges = top + bottom + left + right
+                adj = {i: [] for i in range(num_nodes)}
+                for u, v in all_edges:
+                    adj[u].append(v)
+                    adj[v].append(u)
+                neigh = torch.tensor([[adj[i][0], adj[i][1]] for i in range(num_nodes)], dtype=torch.long, device=device)
+                corners = [c_map[0], c_map[N - 1], c_map[N * N - 1], c_map[N * (N - 1)]]
+                non_corners = torch.tensor([i for i in range(num_nodes) if i not in corners], dtype=torch.long, device=device)
+                setattr(self, cache_key, neigh)
+                setattr(self, f"_cached_non_corners_{num_nodes}", non_corners)
+
+            neigh = getattr(self, cache_key)
+            non_corners = getattr(self, f"_cached_non_corners_{num_nodes}")
+            return x[:, non_corners, :] - 0.5 * (x[:, neigh[non_corners, 0], :] + x[:, neigh[non_corners, 1], :])
+        return None
 
     # ------------------------------------------------------------------
     # Inference helpers (used by FlowMatchingStateEstPipeline)
